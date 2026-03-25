@@ -1,11 +1,10 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import Animated, { useAnimatedStyle, withSpring } from "react-native-reanimated";
 import Colors from "@/constants/colors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-export type ToolType = 'select' | 'text' | 'draw' | 'highlight' | 'shape' | 'sign' | 'image' | 'eraser';
+export type ToolType = 'select' | 'text' | 'draw' | 'highlight' | 'shape' | 'sign' | 'image' | 'comment' | 'form' | 'eraser';
 
 interface ToolBarProps {
   activeTool: ToolType;
@@ -20,6 +19,8 @@ const TOOLS: { id: ToolType; icon: keyof typeof Ionicons.glyphMap; label: string
   { id: 'shape', icon: 'shapes', label: 'Shape' },
   { id: 'sign', icon: 'create', label: 'Sign' },
   { id: 'image', icon: 'image', label: 'Image' },
+  { id: 'comment', icon: 'chatbubble', label: 'Comment' },
+  { id: 'form', icon: 'list', label: 'Form' },
   { id: 'eraser', icon: 'trash-bin', label: 'Eraser' },
 ];
 

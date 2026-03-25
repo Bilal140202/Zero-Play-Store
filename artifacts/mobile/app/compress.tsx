@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, StyleSheet, Text, Pressable, Platform, Alert } from "react-native";
+import { View, StyleSheet, Text, Pressable, Platform, Switch } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,6 +13,9 @@ export default function CompressScreen() {
   const [isCompressing, setIsCompressing] = useState(false);
   const [isDone, setIsDone] = useState(false);
   const progress = useSharedValue(0);
+
+  const [optMetadata, setOptMetadata] = useState(true);
+  const [optImages, setOptImages] = useState(true);
 
   const handleCompress = () => {
     setIsCompressing(true);
@@ -30,6 +33,8 @@ export default function CompressScreen() {
     width: `${progress.value * 100}%`,
   }));
 
+  const estimatedSizes = ["6.8 MB", "3.2 MB", "1.1 MB"];
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
@@ -46,17 +51,17 @@ export default function CompressScreen() {
             <View style={styles.successIcon}>
               <Ionicons name="checkmark" size={48} color={Colors.dark.success} />
             </View>
-            <Text style={styles.successTitle}>Compression Complete</Text>
+            <Text style={styles.successTitle}>Saved 5.1 MB</Text>
             
             <View style={styles.statsRow}>
               <View style={styles.statBox}>
                 <Text style={styles.statLabel}>Original</Text>
-                <Text style={styles.statValue}>12.4 MB</Text>
+                <Text style={styles.statValue}>8.2 MB</Text>
               </View>
               <Ionicons name="arrow-forward" size={24} color={Colors.dark.textSecondary} />
               <View style={[styles.statBox, styles.statBoxSuccess]}>
                 <Text style={styles.statLabel}>Compressed</Text>
-                <Text style={[styles.statValue, { color: Colors.dark.success }]}>2.1 MB</Text>
+                <Text style={[styles.statValue, { color: Colors.dark.success }]}>3.1 MB</Text>
               </View>
             </View>
             
@@ -70,46 +75,62 @@ export default function CompressScreen() {
               <Ionicons name="document" size={32} color={Colors.dark.accent} />
               <View style={styles.fileInfo}>
                 <Text style={styles.fileName}>Annual_Report_2024.pdf</Text>
-                <Text style={styles.fileSize}>12.4 MB</Text>
+                <Text style={styles.fileSize}>Current: 8.2 MB</Text>
               </View>
             </View>
 
             <View style={styles.levelSection}>
               <Text style={styles.sectionTitle}>Compression Level</Text>
               <View style={styles.levelOptions}>
-                {['Low', 'Medium', 'High'].map((l, i) => (
+                {[
+                  { name: 'Low Compression', desc: 'Best Quality, Larger File' },
+                  { name: 'Medium Compression', desc: 'Balanced' },
+                  { name: 'High Compression', desc: 'Smallest Size' }
+                ].map((l, i) => (
                   <Pressable
-                    key={l}
+                    key={l.name}
                     style={[styles.levelBtn, level === i && styles.levelBtnActive]}
                     onPress={() => setLevel(i)}
                   >
-                    <Text style={[styles.levelText, level === i && styles.levelTextActive]}>
-                      {l}
-                    </Text>
-                    {level === i && (
-                      <Text style={styles.levelSubText}>
-                        {i === 0 ? 'Less compression, better quality' : i === 1 ? 'Balanced size & quality' : 'Smallest size, lower quality'}
+                    <View style={styles.levelBtnContent}>
+                      <Text style={[styles.levelText, level === i && styles.levelTextActive]}>
+                        {l.name}
                       </Text>
-                    )}
+                      <Text style={styles.levelSubText}>{l.desc}</Text>
+                    </View>
+                    <View style={styles.estimateBox}>
+                      <Text style={[styles.estimateText, level === i && styles.estimateTextActive]}>
+                        ~{estimatedSizes[i]}
+                      </Text>
+                    </View>
                   </Pressable>
                 ))}
               </View>
             </View>
 
-            {isCompressing && (
+            <View style={styles.optionsSection}>
+              <View style={styles.optionRow}>
+                <Text style={styles.optionLabel}>Remove Metadata</Text>
+                <Switch value={optMetadata} onValueChange={setOptMetadata} trackColor={{ true: Colors.dark.accent }} />
+              </View>
+              <View style={styles.optionRow}>
+                <Text style={styles.optionLabel}>Compress Images</Text>
+                <Switch value={optImages} onValueChange={setOptImages} trackColor={{ true: Colors.dark.accent }} />
+              </View>
+            </View>
+
+            <View style={{ flex: 1 }} />
+
+            {isCompressing ? (
               <View style={styles.progressContainer}>
                 <Text style={styles.progressLabel}>Compressing...</Text>
                 <View style={styles.progressBarBg}>
                   <Animated.View style={[styles.progressBarFill, pStyle]} />
                 </View>
               </View>
-            )}
-
-            <View style={{ flex: 1 }} />
-
-            {!isCompressing && (
+            ) : (
               <Pressable style={styles.actionBtn} onPress={handleCompress}>
-                <Text style={styles.actionBtnText}>Compress Now</Text>
+                <Text style={styles.actionBtnText}>Compress PDF</Text>
               </Pressable>
             )}
           </>

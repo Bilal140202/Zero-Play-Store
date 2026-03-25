@@ -45,7 +45,7 @@ export function SignatureCanvas({
           <Path
             key={index}
             d={p}
-            stroke="#000"
+            stroke="#3B82F6"
             strokeWidth={4}
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -55,7 +55,7 @@ export function SignatureCanvas({
         {currentPath ? (
           <Path
             d={currentPath}
-            stroke="#000"
+            stroke="#3B82F6"
             strokeWidth={4}
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -70,8 +70,8 @@ export function SignatureCanvas({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FFF",
-    borderRadius: 16,
+    backgroundColor: "transparent",
     overflow: "hidden",
   },
 });
+

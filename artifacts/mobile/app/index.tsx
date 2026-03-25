@@ -59,7 +59,6 @@ export default function HomeScreen() {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    Alert.alert("Open File", "File picker would open device storage.");
     router.push({
       pathname: "/viewer",
       params: { fileId: "new", fileName: "New_Document.pdf", pages: 5 }
@@ -74,8 +73,10 @@ export default function HomeScreen() {
   };
 
   const handleDeleteRecent = async (id: string) => {
-    Alert.alert("Delete", "Remove from recent files?", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert("File Actions", "Choose an action", [
+      { text: "Open", onPress: () => handleRecentPress(recentFiles.find(f => f.id === id)!) },
+      { text: "Share", onPress: () => Alert.alert("Shared") },
+      { text: "Rename", onPress: () => Alert.alert("Rename file") },
       { 
         text: "Delete", 
         style: "destructive",
@@ -84,14 +85,18 @@ export default function HomeScreen() {
           setRecentFiles(newFiles);
           await AsyncStorage.setItem('pdfx_recent_files', JSON.stringify(newFiles));
         }
-      }
+      },
+      { text: "Cancel", style: "cancel" },
     ]);
   };
 
   return (
     <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 67 : Math.max(insets.top, 24), paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom }]}>
       <View style={styles.header}>
-        <Text style={styles.logo}>PDF<Text style={styles.logoAccent}>X</Text></Text>
+        <View>
+          <Text style={styles.logo}>PDF<Text style={styles.logoAccent}>X</Text></Text>
+          <Text style={styles.statsRow}>15 Files · 3 Bookmarks · 128 MB Saved</Text>
+        </View>
         <Pressable onPress={() => router.push("/settings")} style={styles.settingsBtn}>
           <Ionicons name="settings-outline" size={24} color={Colors.dark.textPrimary} />
         </Pressable>
@@ -101,6 +106,13 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.dark.accent} />}
       >
+        <View style={styles.quickActions}>
+          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Scan QR</Text></Pressable>
+          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Recent</Text></Pressable>
+          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Starred</Text></Pressable>
+          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Shared</Text></Pressable>
+        </View>
+
         <Pressable 
           style={({ pressed }) => [
             styles.uploadCard,
@@ -135,11 +147,22 @@ export default function HomeScreen() {
           <Text style={styles.sectionTitle}>Tools</Text>
           <View style={styles.toolsGrid}>
             <ToolCard icon="copy-outline" label="Merge PDFs" onPress={() => router.push("/merge")} />
-            <ToolCard icon="cut-outline" label="Split PDF" onPress={() => {}} />
+            <ToolCard icon="cut-outline" label="Split PDF" onPress={() => router.push("/split")} />
             <ToolCard icon="archive-outline" label="Compress" onPress={() => router.push("/compress")} />
             <ToolCard icon="create-outline" label="Sign" onPress={() => router.push("/sign")} />
-            <ToolCard icon="lock-closed-outline" label="Protect" onPress={() => {}} />
-            <ToolCard icon="document-text-outline" label="Page Numbers" onPress={() => {}} />
+            <ToolCard icon="lock-closed-outline" label="Protect" onPress={() => router.push("/protect")} />
+            <ToolCard icon="water-outline" label="Watermark" onPress={() => router.push("/watermark")} />
+            <ToolCard icon="documents-outline" label="Page Manager" onPress={() => router.push("/pages")} />
+            <ToolCard icon="list-outline" label="Fill Form" onPress={() => router.push("/forms")} />
+            <ToolCard icon="bookmark-outline" label="Bookmarks" onPress={() => router.push("/bookmarks")} />
+          </View>
+        </View>
+        
+        <View style={styles.tipCard}>
+          <Ionicons name="bulb-outline" size={24} color={Colors.dark.warning} />
+          <View style={styles.tipContent}>
+            <Text style={styles.tipTitle}>Tip of the day</Text>
+            <Text style={styles.tipText}>Long press any file in Recent Files to access quick options like sharing and renaming.</Text>
           </View>
         </View>
       </ScrollView>
@@ -167,6 +190,12 @@ const styles = StyleSheet.create({
   logoAccent: {
     color: Colors.dark.accent,
   },
+  statsRow: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 4,
+  },
   settingsBtn: {
     width: 40,
     height: 40,
@@ -179,6 +208,23 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 40,
     gap: 32,
+  },
+  quickActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  quickActionBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  quickActionText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.dark.textPrimary,
   },
   uploadCard: {
     backgroundColor: Colors.dark.surface,
@@ -229,5 +275,28 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 16,
+  },
+  tipCard: {
+    flexDirection: "row",
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    padding: 16,
+    borderRadius: 16,
+    gap: 12,
+    alignItems: "center",
+  },
+  tipContent: {
+    flex: 1,
+  },
+  tipTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.dark.warning,
+    marginBottom: 4,
+  },
+  tipText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.dark.textPrimary,
+    lineHeight: 18,
   },
 });

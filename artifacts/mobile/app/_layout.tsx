@@ -28,6 +28,12 @@ function RootLayoutNav() {
       <Stack.Screen name="compress" />
       <Stack.Screen name="sign" />
       <Stack.Screen name="settings" />
+      <Stack.Screen name="pages" />
+      <Stack.Screen name="protect" />
+      <Stack.Screen name="watermark" />
+      <Stack.Screen name="split" />
+      <Stack.Screen name="bookmarks" />
+      <Stack.Screen name="forms" />
     </Stack>
   );
 }

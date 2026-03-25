@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+pnpm workspace monorepo using TypeScript. Primary artifact is PDFX — a fully offline PDF editor mobile app built with Expo React Native.
 
 ## Stack
 
@@ -10,87 +10,86 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
+- **Mobile framework**: Expo SDK 54 (React Native)
+- **Routing**: Expo Router (file-based)
+- **API framework**: Express 5 (api-server artifact)
+- **Validation**: Zod (`zod/v4`)
 - **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+
+## PDFX App — Main Artifact
+
+**PDFX** is a fully-offline, no-subscription PDF editor mobile app with "Obsidian Pro" dark design.
+
+### Color Palette (Obsidian Pro)
+- Background: #0A0A0F
+- Surface: #13131A
+- Surface2: #1C1C28
+- Accent: #6366F1 (indigo)
+- Accent2: #8B5CF6 (purple)
+- Success: #10B981
+- Warning: #F59E0B
+- TextPrimary: #F1F5F9
+- TextSecondary: #94A3B8
+- Border: #2D2D3A
+
+### Screens (12 total)
+- `app/index.tsx` — Home: recent files, quick tools grid (3-col), stats, tips
+- `app/viewer.tsx` — PDF editor with tools: Select, Text, Draw, Highlight, Shape, Sign, Image, Comment, Form, Eraser
+- `app/merge.tsx` — Merge multiple PDFs
+- `app/compress.tsx` — Compress with quality level selector + animated progress
+- `app/sign.tsx` — Draw/type/save signatures
+- `app/pages.tsx` — Page manager: grid view, rotate, delete, reorder, extract
+- `app/protect.tsx` — AES-256 password protection
+- `app/watermark.tsx` — Text & image watermarks
+- `app/split.tsx` — Split by page range or fixed count
+- `app/bookmarks.tsx` — Saved page bookmarks
+- `app/forms.tsx` — Form field detection and filling
+- `app/settings.tsx` — App settings
+
+### Components
+- `components/ToolBar.tsx` — Scrollable bottom toolbar with 10 tools
+- `components/ContextToolbar.tsx` — Context-sensitive options bar
+- `components/PDFPage.tsx` — Simulated PDF page with realistic content
+- `components/RecentFileCard.tsx` — File card with name, size, page count
+- `components/ToolCard.tsx` — Quick-action grid cards
+- `components/SignatureCanvas.tsx` — PanResponder + SVG drawing canvas
+- `components/ErrorBoundary.tsx` / `components/ErrorFallback.tsx`
+
+### Key Dependencies
+- react-native-svg: SVG drawing for signatures
+- react-native-reanimated: Animations
+- @react-native-async-storage/async-storage: Local file list persistence
+- expo-haptics: Touch feedback
+- @expo/vector-icons: All icons (Ionicons)
+
+### Play Store Configuration
+- Android package: com.pdfx.editor
+- iOS bundle: com.pdfx.editor
+- Version: 1.0.0, versionCode: 1
+- EAS Build config: `artifacts/mobile/eas.json`
+- Guide: `artifacts/mobile/PLAY_STORE_GUIDE.md`
 
 ## Structure
 
 ```text
 artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
-│   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+├── artifacts/
+│   ├── mobile/              # PDFX Expo mobile app
+│   │   ├── app/             # 12 screens (Expo Router)
+│   │   ├── components/      # Reusable components
+│   │   ├── constants/colors.ts  # Obsidian Pro theme
+│   │   ├── assets/images/   # icon, splash, feature-graphic, adaptive-icon
+│   │   ├── eas.json         # EAS Build config
+│   │   └── PLAY_STORE_GUIDE.md
+│   └── api-server/          # Express API server
+├── lib/                     # Shared libraries
+│   ├── api-spec/            # OpenAPI spec + Orval codegen
+│   ├── api-client-react/    # Generated React Query hooks
+│   ├── api-zod/             # Generated Zod schemas
+│   └── db/                  # Drizzle ORM schema + DB connection
+├── scripts/                 # Utility scripts
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── tsconfig.json
+└── package.json
 ```
-
-## TypeScript & Composite Projects
-
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
-
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
-
-## Root Scripts
-
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
-
-## Packages
-
-### `artifacts/api-server` (`@workspace/api-server`)
-
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
-
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
-
-### `lib/db` (`@workspace/db`)
-
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
-
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
