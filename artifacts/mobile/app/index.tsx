@@ -1,10 +1,19 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Alert, Platform } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as DocumentPicker from "expo-document-picker";
 import Colors from "@/constants/colors";
 import { RecentFileCard } from "@/components/RecentFileCard";
 import { ToolCard } from "@/components/ToolCard";
@@ -13,35 +22,42 @@ interface RecentFile {
   id: string;
   name: string;
   size: string;
+  uri: string;
   pages: number;
   lastOpened: string;
 }
 
-const DEFAULT_FILES: RecentFile[] = [
-  { id: '1', name: 'Project_Proposal.pdf', size: '2.3 MB', pages: 12, lastOpened: new Date(Date.now() - 3600000).toISOString() },
-  { id: '2', name: 'Invoice_March.pdf', size: '1.1 MB', pages: 3, lastOpened: new Date(Date.now() - 86400000).toISOString() },
-  { id: '3', name: 'Resume_v4.pdf', size: '4.8 MB', pages: 2, lastOpened: new Date(Date.now() - 172800000).toISOString() },
-  { id: '4', name: 'Contract_2024.pdf', size: '8.2 MB', pages: 24, lastOpened: new Date(Date.now() - 604800000).toISOString() },
-];
+const STORAGE_KEY = "pdfx_recent_files_v2";
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "Unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [refreshing, setRefreshing] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
+  const [picking, setPicking] = useState(false);
 
   const loadFiles = async () => {
     try {
-      const stored = await AsyncStorage.getItem('pdfx_recent_files');
+      const stored = await AsyncStorage.getItem(STORAGE_KEY);
       if (stored) {
         setRecentFiles(JSON.parse(stored));
-      } else {
-        await AsyncStorage.setItem('pdfx_recent_files', JSON.stringify(DEFAULT_FILES));
-        setRecentFiles(DEFAULT_FILES);
       }
     } catch (e) {
-      console.error(e);
-      setRecentFiles(DEFAULT_FILES);
+      console.error("Failed to load recent files", e);
+    }
+  };
+
+  const saveFiles = async (files: RecentFile[]) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(files));
+    } catch (e) {
+      console.error("Failed to save recent files", e);
     }
   };
 
@@ -49,97 +65,198 @@ export default function HomeScreen() {
     loadFiles();
   }, []);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadFiles();
-    setRefreshing(false);
-  };
-
-  const handleOpenPDF = () => {
-    if (Platform.OS !== 'web') {
+  const pickPDF = useCallback(async () => {
+    if (picking) return;
+    if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    router.push({
-      pathname: "/viewer",
-      params: { fileId: "new", fileName: "New_Document.pdf", pages: 5 }
-    });
-  };
+    setPicking(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "application/pdf",
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        setPicking(false);
+        return;
+      }
+
+      const asset = result.assets[0];
+      const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+      const newFile: RecentFile = {
+        id,
+        name: asset.name,
+        size: formatBytes(asset.size ?? 0),
+        uri: asset.uri,
+        pages: 1,
+        lastOpened: new Date().toISOString(),
+      };
+
+      const updated = [
+        newFile,
+        ...recentFiles.filter((f) => f.uri !== asset.uri),
+      ].slice(0, 20);
+
+      setRecentFiles(updated);
+      await saveFiles(updated);
+
+      router.push({
+        pathname: "/viewer",
+        params: { fileId: id, fileName: asset.name, fileUri: asset.uri, pages: 1 },
+      });
+    } catch (e) {
+      Alert.alert("Error", "Could not open the file. Please try again.");
+      console.error(e);
+    } finally {
+      setPicking(false);
+    }
+  }, [picking, recentFiles, router]);
 
   const handleRecentPress = (file: RecentFile) => {
+    const updated = recentFiles.map((f) =>
+      f.id === file.id ? { ...f, lastOpened: new Date().toISOString() } : f
+    );
+    setRecentFiles(updated);
+    saveFiles(updated);
     router.push({
       pathname: "/viewer",
-      params: { fileId: file.id, fileName: file.name, pages: file.pages }
+      params: { fileId: file.id, fileName: file.name, fileUri: file.uri, pages: file.pages },
     });
   };
 
-  const handleDeleteRecent = async (id: string) => {
-    Alert.alert("File Actions", "Choose an action", [
-      { text: "Open", onPress: () => handleRecentPress(recentFiles.find(f => f.id === id)!) },
-      { text: "Share", onPress: () => Alert.alert("Shared") },
-      { text: "Rename", onPress: () => Alert.alert("Rename file") },
-      { 
-        text: "Delete", 
+  const handleFileAction = (file: RecentFile) => {
+    Alert.alert(file.name, "Choose an action", [
+      { text: "Open", onPress: () => handleRecentPress(file) },
+      {
+        text: "Remove from recents",
         style: "destructive",
         onPress: async () => {
-          const newFiles = recentFiles.filter(f => f.id !== id);
-          setRecentFiles(newFiles);
-          await AsyncStorage.setItem('pdfx_recent_files', JSON.stringify(newFiles));
-        }
+          const updated = recentFiles.filter((f) => f.id !== file.id);
+          setRecentFiles(updated);
+          await saveFiles(updated);
+        },
       },
       { text: "Cancel", style: "cancel" },
     ]);
   };
 
+  const topPad =
+    Platform.OS === "web" ? 67 : Math.max(insets.top, 24);
+  const botPad =
+    Platform.OS === "web" ? 34 : Math.max(insets.bottom, 16);
+
   return (
-    <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 67 : Math.max(insets.top, 24), paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom }]}>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: topPad, paddingBottom: botPad },
+      ]}
+    >
       <View style={styles.header}>
         <View>
-          <Text style={styles.logo}>PDF<Text style={styles.logoAccent}>X</Text></Text>
-          <Text style={styles.statsRow}>15 Files · 3 Bookmarks · 128 MB Saved</Text>
+          <Text style={styles.logo}>
+            PDF<Text style={styles.logoAccent}>X</Text>
+          </Text>
+          <Text style={styles.statsRow}>
+            {recentFiles.length} file{recentFiles.length !== 1 ? "s" : ""} · Free · No internet needed
+          </Text>
         </View>
-        <Pressable onPress={() => router.push("/settings")} style={styles.settingsBtn}>
-          <Ionicons name="settings-outline" size={24} color={Colors.dark.textPrimary} />
+        <Pressable
+          onPress={() => router.push("/settings")}
+          style={styles.settingsBtn}
+        >
+          <Ionicons
+            name="settings-outline"
+            size={24}
+            color={Colors.dark.textPrimary}
+          />
         </Pressable>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.dark.accent} />}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.quickActions}>
-          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Scan QR</Text></Pressable>
-          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Recent</Text></Pressable>
-          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Starred</Text></Pressable>
-          <Pressable style={styles.quickActionBtn}><Text style={styles.quickActionText}>Shared</Text></Pressable>
-        </View>
-
-        <Pressable 
+        <Pressable
           style={({ pressed }) => [
             styles.uploadCard,
-            pressed && styles.uploadCardPressed
-          ]} 
-          onPress={handleOpenPDF}
+            pressed && styles.uploadCardPressed,
+            picking && styles.uploadCardDisabled,
+          ]}
+          onPress={pickPDF}
+          disabled={picking}
         >
           <View style={styles.uploadIconContainer}>
-            <Ionicons name="cloud-upload-outline" size={32} color={Colors.dark.accent} />
+            <Ionicons
+              name={picking ? "hourglass-outline" : "folder-open-outline"}
+              size={36}
+              color={Colors.dark.accent}
+            />
           </View>
-          <Text style={styles.uploadTitle}>Open PDF</Text>
-          <Text style={styles.uploadSubtitle}>Tap to browse device files</Text>
+          <Text style={styles.uploadTitle}>
+            {picking ? "Opening…" : "Open PDF"}
+          </Text>
+          <Text style={styles.uploadSubtitle}>
+            {Platform.OS === "web"
+              ? "Tap to choose a PDF from your device"
+              : "Browse files, Downloads or cloud storage"}
+          </Text>
         </Pressable>
 
-        {!!recentFiles.length && (
+        {recentFiles.length > 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Recent Files</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentList}>
-              {recentFiles.map(file => (
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Files</Text>
+              <Pressable
+                onPress={() => {
+                  Alert.alert(
+                    "Clear recents",
+                    "Remove all files from your recent list? (Files on your device are not deleted)",
+                    [
+                      {
+                        text: "Clear all",
+                        style: "destructive",
+                        onPress: async () => {
+                          setRecentFiles([]);
+                          await saveFiles([]);
+                        },
+                      },
+                      { text: "Cancel", style: "cancel" },
+                    ]
+                  );
+                }}
+              >
+                <Text style={styles.clearBtn}>Clear all</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentList}
+            >
+              {recentFiles.map((file) => (
                 <RecentFileCard
                   key={file.id}
                   {...file}
                   onPress={() => handleRecentPress(file)}
-                  onLongPress={() => handleDeleteRecent(file.id)}
+                  onLongPress={() => handleFileAction(file)}
                 />
               ))}
             </ScrollView>
+          </View>
+        ) : (
+          <View style={styles.emptyState}>
+            <Ionicons
+              name="documents-outline"
+              size={56}
+              color={Colors.dark.border}
+            />
+            <Text style={styles.emptyTitle}>No recent files</Text>
+            <Text style={styles.emptySub}>
+              Tap "Open PDF" above to pick a file from your device
+            </Text>
           </View>
         )}
 
@@ -157,12 +274,14 @@ export default function HomeScreen() {
             <ToolCard icon="bookmark-outline" label="Bookmarks" onPress={() => router.push("/bookmarks")} />
           </View>
         </View>
-        
+
         <View style={styles.tipCard}>
-          <Ionicons name="bulb-outline" size={24} color={Colors.dark.warning} />
+          <Ionicons name="bulb-outline" size={20} color={Colors.dark.warning} />
           <View style={styles.tipContent}>
-            <Text style={styles.tipTitle}>Tip of the day</Text>
-            <Text style={styles.tipText}>Long press any file in Recent Files to access quick options like sharing and renaming.</Text>
+            <Text style={styles.tipTitle}>Tip</Text>
+            <Text style={styles.tipText}>
+              Long-press any recent file to remove it from history. Your files stay safe on your device.
+            </Text>
           </View>
         </View>
       </ScrollView>
@@ -206,70 +325,85 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
-    paddingBottom: 40,
+    paddingBottom: 48,
     gap: 32,
-  },
-  quickActions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  quickActionBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: Colors.dark.surface,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-  },
-  quickActionText: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 12,
-    color: Colors.dark.textPrimary,
   },
   uploadCard: {
     backgroundColor: Colors.dark.surface,
     borderWidth: 2,
-    borderColor: Colors.dark.border,
+    borderColor: Colors.dark.accent + "55",
     borderStyle: "dashed",
     borderRadius: 24,
-    padding: 32,
+    padding: 36,
     alignItems: "center",
     justifyContent: "center",
+    gap: 12,
   },
   uploadCardPressed: {
-    opacity: 0.8,
+    opacity: 0.75,
     backgroundColor: Colors.dark.surface2,
+  },
+  uploadCardDisabled: {
+    opacity: 0.5,
   },
   uploadIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: Colors.dark.surface2,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: Colors.dark.accent + "22",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
   },
   uploadTitle: {
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    fontSize: 20,
     color: Colors.dark.textPrimary,
-    marginBottom: 8,
   },
   uploadSubtitle: {
     fontFamily: "Inter_400Regular",
     fontSize: 14,
     color: Colors.dark.textSecondary,
+    textAlign: "center",
   },
   section: {
     gap: 16,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   sectionTitle: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 20,
     color: Colors.dark.textPrimary,
   },
+  clearBtn: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+  },
   recentList: {
-    paddingRight: 24,
+    gap: 12,
+    paddingRight: 8,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 32,
+    gap: 12,
+  },
+  emptyTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 18,
+    color: Colors.dark.textSecondary,
+  },
+  emptySub: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.dark.border,
+    textAlign: "center",
+    paddingHorizontal: 24,
+    lineHeight: 20,
   },
   toolsGrid: {
     flexDirection: "row",
@@ -278,24 +412,26 @@ const styles = StyleSheet.create({
   },
   tipCard: {
     flexDirection: "row",
-    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    backgroundColor: "rgba(245,158,11,0.08)",
     padding: 16,
     borderRadius: 16,
     gap: 12,
-    alignItems: "center",
+    alignItems: "flex-start",
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.18)",
   },
   tipContent: {
     flex: 1,
   },
   tipTitle: {
     fontFamily: "Inter_600SemiBold",
-    fontSize: 14,
+    fontSize: 13,
     color: Colors.dark.warning,
     marginBottom: 4,
   },
   tipText: {
     fontFamily: "Inter_400Regular",
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.dark.textPrimary,
     lineHeight: 18,
   },
