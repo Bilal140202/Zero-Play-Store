@@ -8,7 +8,7 @@
     "platforms": ["ios", "android"],
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "pdfx",
+    "scheme": "mobile",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0A0A0F",
     "primaryColor": "#6366F1",
