@@ -1,15 +1,18 @@
-import React, { useState } from "react";
-import { View, StyleSheet, Text, Pressable, ScrollView, Platform, Dimensions, Alert } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, StyleSheet, Text, Pressable, ScrollView, Platform, Dimensions, Alert, ActivityIndicator } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, FadeOut, SlideInDown } from "react-native-reanimated";
+import * as DocumentPicker from "expo-document-picker";
+import { applyPageOperations, extractPages, getPdfPageCount } from "@/lib/pdfEngine";
 
 interface PageItem {
   id: string;
   pageNumber: number;
+  originalIndex: number;
   rotationDegree: 0 | 90 | 180 | 270;
   isSelected: boolean;
 }
@@ -24,19 +27,75 @@ export default function PagesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
-  const initialPages = parseInt(params.pages as string) || 12;
 
-  const [pages, setPages] = useState<PageItem[]>(
-    Array.from({ length: initialPages }).map((_, i) => ({
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
-      pageNumber: i + 1,
-      rotationDegree: 0,
-      isSelected: false,
-    }))
-  );
-  
+  const [fileUri, setFileUri] = useState((params.fileUri as string) || "");
+  const [fileName, setFileName] = useState((params.fileName as string) || "");
+  const [pages, setPages] = useState<PageItem[]>([]);
+  const [deletedOriginalIndices, setDeletedOriginalIndices] = useState<number[]>([]);
+  const [loadingPages, setLoadingPages] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
   const [selectionMode, setSelectionMode] = useState(false);
   const [showFabMenu, setShowFabMenu] = useState(false);
+
+  useEffect(() => {
+    if (fileUri) loadPdf();
+  }, [fileUri]);
+
+  const loadPdf = async () => {
+    setLoadingPages(true);
+    try {
+      const count = await getPdfPageCount(fileUri);
+      setPages(
+        Array.from({ length: count }).map((_, i) => ({
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
+          pageNumber: i + 1,
+          originalIndex: i,
+          rotationDegree: 0,
+          isSelected: false,
+        }))
+      );
+      setDeletedOriginalIndices([]);
+    } catch (e) {
+      Alert.alert("Error", "Could not read this PDF.");
+    } finally {
+      setLoadingPages(false);
+    }
+  };
+
+  const pickFile = async () => {
+    const res = await DocumentPicker.getDocumentAsync({
+      type: "application/pdf",
+      copyToCacheDirectory: true,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    setFileUri(res.assets[0].uri);
+    setFileName(res.assets[0].name);
+  };
+
+  const handleSave = async () => {
+    if (!fileUri) return Alert.alert("No file", "Open a PDF first.");
+    setIsSaving(true);
+    try {
+      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const rotations: Record<number, 0 | 90 | 180 | 270> = {};
+      pages.forEach((p) => {
+        if (p.rotationDegree !== 0) rotations[p.originalIndex] = p.rotationDegree;
+      });
+      await applyPageOperations(
+        fileUri,
+        rotations,
+        deletedOriginalIndices,
+        fileName.replace(".pdf", "_edited.pdf") || "edited.pdf"
+      );
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert("Saved", "PDF saved successfully via share sheet.");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not save PDF.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const toggleSelectionMode = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -63,16 +122,18 @@ export default function PagesScreen() {
 
   const handleDelete = () => {
     if (selectedCount === 0) return;
-    Alert.alert("Delete Pages", `Are you sure you want to delete ${selectedCount} pages?`, [
+    Alert.alert("Delete Pages", `Delete ${selectedCount} page${selectedCount !== 1 ? "s" : ""} from the PDF?`, [
       { text: "Cancel", style: "cancel" },
-      { 
-        text: "Delete", 
+      {
+        text: "Delete",
         style: "destructive",
         onPress: () => {
-          setPages(pages.filter(p => !p.isSelected).map((p, i) => ({ ...p, pageNumber: i + 1 })));
+          const toDelete = pages.filter((p) => p.isSelected).map((p) => p.originalIndex);
+          setDeletedOriginalIndices((prev) => [...prev, ...toDelete]);
+          setPages(pages.filter((p) => !p.isSelected).map((p, i) => ({ ...p, pageNumber: i + 1 })));
           setSelectionMode(false);
-        }
-      }
+        },
+      },
     ]);
   };
 
@@ -96,6 +157,7 @@ export default function PagesScreen() {
     const newPage: PageItem = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       pageNumber: pages.length + 1,
+      originalIndex: -1,
       rotationDegree: 0,
       isSelected: false,
     };
@@ -103,20 +165,86 @@ export default function PagesScreen() {
     setShowFabMenu(false);
   };
 
+  const handleExtract = async () => {
+    if (!fileUri) return Alert.alert("No file", "Open a PDF first.");
+    const selected = pages.filter((p) => p.isSelected && p.originalIndex >= 0);
+    if (!selected.length) return Alert.alert("No pages selected", "Select pages to extract.");
+    setIsSaving(true);
+    try {
+      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await extractPages(
+        fileUri,
+        selected.map((p) => p.originalIndex),
+        fileName.replace(".pdf", "_extracted.pdf") || "extracted.pdf"
+      );
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSelectionMode(false);
+      setPages(pages.map((p) => ({ ...p, isSelected: false })));
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not extract pages.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const topPad = Platform.OS === "web" ? 67 : Math.max(insets.top, 0);
+  const botPad = Platform.OS === "web" ? 34 : Math.max(insets.bottom, 16);
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: topPad, paddingBottom: botPad }]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.dark.textPrimary} />
         </Pressable>
         <View style={styles.titleContainer}>
           <Text style={styles.title}>{selectionMode ? `${selectedCount} Selected` : "Page Manager"}</Text>
-          {!selectionMode && <Text style={styles.subtitle}>{pages.length} pages</Text>}
+          {!selectionMode && pages.length > 0 && (
+            <Text style={styles.subtitle}>{pages.length} pages</Text>
+          )}
         </View>
-        <Pressable onPress={toggleSelectionMode} style={styles.headerAction}>
-          <Text style={styles.headerActionText}>{selectionMode ? "Cancel" : "Select"}</Text>
-        </Pressable>
+        <View style={styles.headerRight}>
+          {pages.length > 0 && !selectionMode && (
+            <Pressable onPress={handleSave} style={styles.saveBtn} disabled={isSaving}>
+              {isSaving ? (
+                <ActivityIndicator size="small" color={Colors.dark.success} />
+              ) : (
+                <Ionicons name="save-outline" size={20} color={Colors.dark.success} />
+              )}
+            </Pressable>
+          )}
+          <Pressable onPress={toggleSelectionMode} style={styles.headerAction}>
+            <Text style={styles.headerActionText}>{selectionMode ? "Cancel" : "Select"}</Text>
+          </Pressable>
+        </View>
       </View>
+
+      {/* File picker card when no file loaded */}
+      {!fileUri && (
+        <View style={styles.pickFileWrap}>
+          <Pressable style={styles.pickFileCard} onPress={pickFile}>
+            <Ionicons name="folder-open-outline" size={36} color={Colors.dark.accent} />
+            <Text style={styles.pickFileTitle}>Open a PDF to edit pages</Text>
+            <Text style={styles.pickFileSub}>Rotate, delete & extract pages, then save</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {loadingPages && (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={Colors.dark.accent} />
+          <Text style={styles.loadingText}>Reading PDF…</Text>
+        </View>
+      )}
+
+      {fileUri && !loadingPages && pages.length > 0 && (
+        <Pressable style={styles.fileChip} onPress={pickFile}>
+          <Ionicons name="document-text" size={14} color={Colors.dark.accent} />
+          <Text style={styles.fileChipText} numberOfLines={1}>
+            {fileName || "PDF loaded"}
+          </Text>
+          <Ionicons name="swap-horizontal" size={14} color={Colors.dark.textSecondary} />
+        </Pressable>
+      )}
 
       <ScrollView contentContainerStyle={styles.grid}>
         {pages.map((page, index) => (
@@ -158,7 +286,7 @@ export default function PagesScreen() {
             <Ionicons name="refresh-outline" size={24} color={Colors.dark.textPrimary} />
             <Text style={styles.actionText}>Right</Text>
           </Pressable>
-          <Pressable style={styles.actionBtn}>
+          <Pressable style={styles.actionBtn} onPress={handleExtract}>
             <Ionicons name="log-out-outline" size={24} color={Colors.dark.textPrimary} />
             <Text style={styles.actionText}>Extract</Text>
           </Pressable>
@@ -217,14 +345,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.dark.textSecondary,
   },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  saveBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerAction: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
   },
   headerActionText: {
     fontFamily: "Inter_500Medium",
-    fontSize: 16,
+    fontSize: 15,
     color: Colors.dark.accent,
+  },
+  pickFileWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  pickFileCard: {
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 20,
+    padding: 32,
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    borderWidth: 2,
+    borderColor: Colors.dark.accent + "44",
+    borderStyle: "dashed",
+  },
+  pickFileTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 16,
+    color: Colors.dark.textPrimary,
+    textAlign: "center",
+  },
+  pickFileSub: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    textAlign: "center",
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  loadingText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+  },
+  fileChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  fileChipText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    maxWidth: 200,
   },
   grid: {
     flexDirection: "row",

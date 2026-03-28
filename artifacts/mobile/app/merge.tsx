@@ -15,6 +15,7 @@ import Colors from "@/constants/colors";
 import Animated, { FadeIn, FadeOut, SlideInDown } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import * as DocumentPicker from "expo-document-picker";
+import { mergePdfs } from "@/lib/pdfEngine";
 
 interface MergeItem {
   id: string;
@@ -36,6 +37,7 @@ export default function MergeScreen() {
   const [files, setFiles] = useState<MergeItem[]>([]);
   const [isSuccess, setIsSuccess] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : Math.max(insets.top, 0);
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -74,14 +76,20 @@ export default function MergeScreen() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  const handleMerge = () => {
-    if (Platform.OS !== "web") {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const handleMerge = async () => {
+    if (files.length < 2) return;
+    setIsMerging(true);
+    try {
+      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const uris = files.map((f) => f.uri);
+      await mergePdfs(uris, "merged.pdf");
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setIsSuccess(true);
+    } catch (e: any) {
+      Alert.alert("Merge Failed", e?.message || "Could not merge files. Ensure the PDFs are valid.");
+    } finally {
+      setIsMerging(false);
     }
-    setIsSuccess(true);
-    setTimeout(() => {
-      router.back();
-    }, 2200);
   };
 
   return (
@@ -193,10 +201,14 @@ export default function MergeScreen() {
 
           {files.length >= 2 && (
             <View style={styles.footer}>
-              <Pressable style={styles.mergeBtn} onPress={handleMerge}>
+              <Pressable
+                style={[styles.mergeBtn, isMerging && styles.btnDisabled]}
+                onPress={handleMerge}
+                disabled={isMerging}
+              >
                 <Ionicons name="git-merge-outline" size={20} color="#FFF" />
                 <Text style={styles.mergeBtnText}>
-                  Merge {files.length} Files
+                  {isMerging ? "Merging…" : `Merge ${files.length} Files`}
                 </Text>
               </Pressable>
             </View>

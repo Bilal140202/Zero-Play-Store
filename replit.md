@@ -56,11 +56,35 @@ pnpm workspace monorepo using TypeScript. Primary artifact is PDFX — a fully o
 - `components/ErrorBoundary.tsx` / `components/ErrorFallback.tsx`
 
 ### Key Dependencies
+- **pdf-lib ^1.17.1**: Pure-JS PDF manipulation (merge, split, compress, watermark, rotate, delete pages, extract) — works offline, no native code
+- **expo-sharing ~14.0.8**: Android share sheet for saving output PDFs
+- **expo-file-system ~19.0.21**: Read/write PDF bytes (base64) for pdf-lib
+- **expo-document-picker ~14.0.8**: Real file picker across all tool screens
+- **react-native-webview 13.15.0**: PDF.js rendering in viewer
 - react-native-svg: SVG drawing for signatures
 - react-native-reanimated: Animations
 - @react-native-async-storage/async-storage: Local file list persistence
 - expo-haptics: Touch feedback
 - @expo/vector-icons: All icons (Ionicons)
+
+### Real PDF Operations (pdf-lib)
+- `lib/pdfEngine.ts` — Central engine for all PDF operations:
+  - `loadPdfDoc(uri)` — reads base64 from FileSystem, loads with pdf-lib
+  - `saveAndShare(pdf, filename)` — saves to cache, opens Android share sheet
+  - `mergePdfs(uris[], outputName)` — real multi-PDF merge
+  - `compressPdf(uri, outputName)` — useObjectStreams compression, returns real before/after sizes
+  - `splitPdfByRanges(uri, ranges[], baseName)` — split by page ranges
+  - `splitPdfEveryN(uri, n, baseName)` — split every N pages
+  - `watermarkPdf(uri, text, opts, outputName)` — diagonal/center/top/bottom text watermark
+  - `applyPageOperations(uri, rotations, deletedIndices, outputName)` — rotate + delete pages
+  - `extractPages(uri, indices[], outputName)` — extract subset of pages
+  - `getPdfPageCount(uri)` — read page count from PDF
+
+### Feature Tracker
+- `app/todo.tsx` — In-app feature tracker screen showing all planned/in-progress/done features
+- Accessible from home screen via "Feature Tracker" banner
+- Filter by status: All / Done / In Progress / Planned
+- Progress bar with percentage complete
 
 ### Play Store Configuration
 - Android package: com.pdfx.editor

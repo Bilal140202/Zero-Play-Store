@@ -275,6 +275,17 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        <Pressable style={styles.trackerBanner} onPress={() => router.push("/todo")}>
+          <View style={styles.trackerLeft}>
+            <Ionicons name="bar-chart-outline" size={20} color={Colors.dark.accent} />
+            <View>
+              <Text style={styles.trackerTitle}>Feature Tracker</Text>
+              <Text style={styles.trackerSub}>See what's built, in progress & planned</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={Colors.dark.textSecondary} />
+        </Pressable>
+
         <View style={styles.tipCard}>
           <Ionicons name="bulb-outline" size={20} color={Colors.dark.warning} />
           <View style={styles.tipContent}>
@@ -434,5 +445,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.dark.textPrimary,
     lineHeight: 18,
+  },
+  trackerBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.dark.accent + "44",
+  },
+  trackerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  trackerTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.dark.textPrimary,
+  },
+  trackerSub: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    marginTop: 2,
   },
 });

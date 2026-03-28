@@ -1,38 +1,95 @@
 import React, { useState } from "react";
-import { View, StyleSheet, Text, Pressable, ScrollView, TextInput, Platform } from "react-native";
-import { useRouter } from "expo-router";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
-import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import * as Haptics from "expo-haptics";
+import * as DocumentPicker from "expo-document-picker";
+import { watermarkPdf } from "@/lib/pdfEngine";
 
-type TabType = 'text' | 'image';
+const PRESET_COLORS = [
+  { hex: "#EF4444", label: "Red" },
+  { hex: "#3B82F6", label: "Blue" },
+  { hex: "#10B981", label: "Green" },
+  { hex: "#94A3B8", label: "Gray" },
+  { hex: "#F59E0B", label: "Amber" },
+  { hex: "#000000", label: "Black" },
+];
+
+const POSITIONS = [
+  { key: "diagonal", label: "Diagonal", icon: "arrow-forward-circle-outline" },
+  { key: "center", label: "Center", icon: "radio-button-on-outline" },
+  { key: "top", label: "Top", icon: "arrow-up-circle-outline" },
+  { key: "bottom", label: "Bottom", icon: "arrow-down-circle-outline" },
+] as const;
+
+type Position = "diagonal" | "center" | "top" | "bottom";
 
 export default function WatermarkScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<TabType>('text');
-  
+  const params = useLocalSearchParams();
+
+  const [fileUri, setFileUri] = useState((params.fileUri as string) || "");
+  const [fileName, setFileName] = useState((params.fileName as string) || "");
+
   const [text, setText] = useState("CONFIDENTIAL");
-  const [color, setColor] = useState("#EF4444");
-  const [opacity, setOpacity] = useState(0.5);
-  const [position, setPosition] = useState<'diagonal' | 'horizontal'>('diagonal');
-  
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [hexColor, setHexColor] = useState("#EF4444");
+  const [opacity, setOpacity] = useState(0.35);
+  const [position, setPosition] = useState<Position>("diagonal");
+  const [fontSize, setFontSize] = useState(48);
 
-  const COLORS = ["#EF4444", "#3B82F6", "#10B981", "#94A3B8", "#000000"];
+  const [isWorking, setIsWorking] = useState(false);
+  const [isDone, setIsDone] = useState(false);
 
-  const handleApply = () => {
-    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setIsSuccess(true);
-    setTimeout(() => {
-      router.back();
-    }, 2000);
+  const topPad = Platform.OS === "web" ? 67 : Math.max(insets.top, 0);
+  const botPad = Platform.OS === "web" ? 34 : Math.max(insets.bottom, 16);
+
+  const pickFile = async () => {
+    const res = await DocumentPicker.getDocumentAsync({
+      type: "application/pdf",
+      copyToCacheDirectory: true,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    setFileUri(res.assets[0].uri);
+    setFileName(res.assets[0].name);
+    setIsDone(false);
+  };
+
+  const handleApply = async () => {
+    if (!fileUri) return pickFile();
+    if (!text.trim()) return Alert.alert("Missing text", "Enter watermark text.");
+    setIsWorking(true);
+    try {
+      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await watermarkPdf(
+        fileUri,
+        text.trim(),
+        { opacity, angleDeg: 45, fontSize, hexColor, position },
+        fileName.replace(".pdf", "_watermarked.pdf") || "watermarked.pdf"
+      );
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setIsDone(true);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to apply watermark.");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: topPad, paddingBottom: botPad }]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.dark.textPrimary} />
@@ -41,328 +98,240 @@ export default function WatermarkScreen() {
         <View style={{ width: 48 }} />
       </View>
 
-      {isSuccess ? (
+      {isDone ? (
         <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.successState}>
           <View style={styles.successIcon}>
             <Ionicons name="checkmark" size={48} color={Colors.dark.success} />
           </View>
           <Text style={styles.successTitle}>Watermark Applied!</Text>
+          <Text style={styles.successSub}>File saved via share sheet</Text>
+          <Pressable style={styles.doneBtn} onPress={() => setIsDone(false)}>
+            <Text style={styles.doneBtnText}>Apply to another file</Text>
+          </Pressable>
         </Animated.View>
       ) : (
-        <>
-          <View style={styles.tabs}>
-            <Pressable style={[styles.tab, tab === 'text' && styles.activeTab]} onPress={() => setTab('text')}>
-              <Text style={[styles.tabText, tab === 'text' && styles.activeTabText]}>Text</Text>
-            </Pressable>
-            <Pressable style={[styles.tab, tab === 'image' && styles.activeTab]} onPress={() => setTab('image')}>
-              <Text style={[styles.tabText, tab === 'image' && styles.activeTabText]}>Image</Text>
-            </Pressable>
-          </View>
-
-          <ScrollView contentContainerStyle={styles.content}>
-            <View style={styles.previewContainer}>
-              <View style={styles.pdfPage}>
-                <View style={styles.pdfLine} />
-                <View style={[styles.pdfLine, { width: '80%' }]} />
-                <View style={[styles.pdfLine, { width: '60%' }]} />
-                <View style={styles.pdfBlock} />
-                <View style={styles.pdfLine} />
-                <View style={[styles.pdfLine, { width: '40%' }]} />
-                
-                {tab === 'text' && !!text && (
-                  <View style={[
-                    styles.watermarkOverlay,
-                    position === 'diagonal' ? { transform: [{ rotate: '-45deg' }] } : {}
-                  ]}>
-                    <Text style={[
-                      styles.watermarkTextPreview,
-                      { color, opacity }
-                    ]}>
-                      {text}
-                    </Text>
-                  </View>
-                )}
-                {tab === 'image' && (
-                  <View style={[styles.watermarkOverlay, { opacity: 0.3 }]}>
-                    <Ionicons name="image" size={100} color="#000" />
-                  </View>
-                )}
-              </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          {/* File picker */}
+          <Pressable style={styles.fileCard} onPress={pickFile}>
+            <View style={styles.fileIconWrap}>
+              <Ionicons
+                name={fileUri ? "document-text" : "folder-open-outline"}
+                size={24}
+                color={Colors.dark.accent}
+              />
             </View>
+            <View style={styles.fileMeta}>
+              <Text style={styles.fileNameText} numberOfLines={1}>
+                {fileName || "Choose a PDF file"}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={Colors.dark.textSecondary} />
+          </Pressable>
 
-            {tab === 'text' ? (
-              <View style={styles.controls}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Watermark Text</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={text}
-                    onChangeText={setText}
-                    placeholder="Enter text..."
-                    placeholderTextColor={Colors.dark.textSecondary}
-                  />
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Color</Text>
-                  <View style={styles.colorRow}>
-                    {COLORS.map(c => (
-                      <Pressable 
-                        key={c} 
-                        style={[styles.colorDot, { backgroundColor: c }, color === c && styles.activeColorDot]}
-                        onPress={() => setColor(c)}
-                      />
-                    ))}
-                  </View>
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Orientation</Text>
-                  <View style={styles.orientationRow}>
-                    <Pressable 
-                      style={[styles.orientBtn, position === 'diagonal' && styles.activeOrientBtn]}
-                      onPress={() => setPosition('diagonal')}
-                    >
-                      <Ionicons name="expand" size={24} color={position === 'diagonal' ? Colors.dark.accent : Colors.dark.textSecondary} style={{ transform: [{ rotate: '-45deg' }] }} />
-                      <Text style={[styles.orientText, position === 'diagonal' && styles.activeOrientText]}>Diagonal</Text>
-                    </Pressable>
-                    <Pressable 
-                      style={[styles.orientBtn, position === 'horizontal' && styles.activeOrientBtn]}
-                      onPress={() => setPosition('horizontal')}
-                    >
-                      <Ionicons name="remove" size={24} color={position === 'horizontal' ? Colors.dark.accent : Colors.dark.textSecondary} />
-                      <Text style={[styles.orientText, position === 'horizontal' && styles.activeOrientText]}>Horizontal</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            ) : (
-              <View style={styles.controls}>
-                <Pressable style={styles.imagePickerBtn}>
-                  <Ionicons name="images-outline" size={32} color={Colors.dark.accent} />
-                  <Text style={styles.imagePickerText}>Select Image</Text>
-                </Pressable>
-              </View>
-            )}
-          </ScrollView>
-
-          <View style={styles.footer}>
-            <Pressable style={styles.applyBtn} onPress={handleApply}>
-              <Text style={styles.applyBtnText}>Apply Watermark</Text>
-            </Pressable>
+          {/* Preview */}
+          <View style={[styles.preview, { borderColor: hexColor + "44" }]}>
+            <Text
+              style={[
+                styles.previewText,
+                {
+                  color: hexColor,
+                  opacity,
+                  fontSize: Math.min(fontSize * 0.4, 28),
+                  transform: position === "diagonal" ? [{ rotate: "-25deg" }] : [],
+                },
+              ]}
+            >
+              {text || "WATERMARK"}
+            </Text>
           </View>
-        </>
+
+          {/* Text */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Watermark Text</Text>
+            <TextInput
+              style={styles.textInput}
+              value={text}
+              onChangeText={setText}
+              placeholder="CONFIDENTIAL"
+              placeholderTextColor={Colors.dark.textSecondary}
+              maxLength={40}
+            />
+          </View>
+
+          {/* Color */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Color</Text>
+            <View style={styles.colorRow}>
+              {PRESET_COLORS.map((c) => (
+                <Pressable
+                  key={c.hex}
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: c.hex },
+                    hexColor === c.hex && styles.colorDotActive,
+                  ]}
+                  onPress={() => setHexColor(c.hex)}
+                />
+              ))}
+            </View>
+          </View>
+
+          {/* Position */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Position</Text>
+            <View style={styles.positionGrid}>
+              {POSITIONS.map((p) => (
+                <Pressable
+                  key={p.key}
+                  style={[styles.posBtn, position === p.key && styles.posBtnActive]}
+                  onPress={() => setPosition(p.key)}
+                >
+                  <Ionicons
+                    name={p.icon as any}
+                    size={20}
+                    color={position === p.key ? "#FFF" : Colors.dark.textSecondary}
+                  />
+                  <Text style={[styles.posBtnText, position === p.key && styles.posBtnTextActive]}>
+                    {p.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {/* Opacity */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>
+              Opacity — {Math.round(opacity * 100)}%
+            </Text>
+            <View style={styles.opacityRow}>
+              {[0.1, 0.25, 0.35, 0.5, 0.7].map((v) => (
+                <Pressable
+                  key={v}
+                  style={[styles.opacityBtn, opacity === v && styles.opacityBtnActive]}
+                  onPress={() => setOpacity(v)}
+                >
+                  <Text style={[styles.opacityBtnText, opacity === v && { color: "#FFF" }]}>
+                    {Math.round(v * 100)}%
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {/* Font size */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>
+              Font Size — {fontSize}pt
+            </Text>
+            <View style={styles.opacityRow}>
+              {[24, 36, 48, 64, 80].map((v) => (
+                <Pressable
+                  key={v}
+                  style={[styles.opacityBtn, fontSize === v && styles.opacityBtnActive]}
+                  onPress={() => setFontSize(v)}
+                >
+                  <Text style={[styles.opacityBtnText, fontSize === v && { color: "#FFF" }]}>
+                    {v}pt
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {/* Apply button */}
+          <Pressable
+            style={[styles.applyBtn, (isWorking || !fileUri) && styles.applyBtnDisabled]}
+            onPress={handleApply}
+            disabled={isWorking}
+          >
+            <Ionicons name="water-outline" size={20} color="#FFF" />
+            <Text style={styles.applyBtnText}>
+              {!fileUri
+                ? "Choose File to Watermark"
+                : isWorking
+                ? "Applying…"
+                : "Apply Watermark & Save"}
+            </Text>
+          </Pressable>
+        </ScrollView>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.dark.background,
-  },
+  container: { flex: 1, backgroundColor: Colors.dark.background },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
-    height: 56,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 8, height: 56,
   },
-  iconBtn: {
-    width: 48,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "center",
+  iconBtn: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  title: { fontFamily: "Inter_600SemiBold", fontSize: 18, color: Colors.dark.textPrimary },
+  content: { padding: 16, gap: 16, paddingBottom: 32 },
+  fileCard: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    backgroundColor: Colors.dark.surface, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.dark.accent + "55",
   },
-  title: {
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 18,
-    color: Colors.dark.textPrimary,
+  fileIconWrap: {
+    width: 44, height: 44, borderRadius: 10,
+    backgroundColor: Colors.dark.accent + "22", alignItems: "center", justifyContent: "center",
   },
-  tabs: {
-    flexDirection: "row",
-    paddingHorizontal: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.dark.border,
+  fileMeta: { flex: 1 },
+  fileNameText: { fontFamily: "Inter_500Medium", fontSize: 14, color: Colors.dark.textPrimary },
+  preview: {
+    height: 120, backgroundColor: Colors.dark.surface, borderRadius: 14,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, overflow: "hidden",
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 16,
-    alignItems: "center",
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
+  previewText: { fontFamily: "Inter_700Bold", letterSpacing: 4, textTransform: "uppercase" },
+  section: {
+    backgroundColor: Colors.dark.surface, borderRadius: 14, padding: 16,
+    borderWidth: 1, borderColor: Colors.dark.border, gap: 12,
   },
-  activeTab: {
-    borderBottomColor: Colors.dark.accent,
+  sectionLabel: { fontFamily: "Inter_600SemiBold", fontSize: 13, color: Colors.dark.textSecondary },
+  textInput: {
+    backgroundColor: Colors.dark.surface2, borderRadius: 10, padding: 12,
+    color: Colors.dark.textPrimary, fontFamily: "Inter_500Medium", fontSize: 15,
+    borderWidth: 1, borderColor: Colors.dark.border,
   },
-  tabText: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 16,
-    color: Colors.dark.textSecondary,
+  colorRow: { flexDirection: "row", gap: 12 },
+  colorDot: { width: 36, height: 36, borderRadius: 18 },
+  colorDotActive: { borderWidth: 3, borderColor: "#FFF" },
+  positionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  posBtn: {
+    flex: 1, minWidth: "45%", flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: Colors.dark.surface2, borderRadius: 10, padding: 10,
+    borderWidth: 1, borderColor: Colors.dark.border,
   },
-  activeTabText: {
-    color: Colors.dark.textPrimary,
+  posBtnActive: { backgroundColor: Colors.dark.accent, borderColor: Colors.dark.accent },
+  posBtnText: { fontFamily: "Inter_500Medium", fontSize: 13, color: Colors.dark.textSecondary },
+  posBtnTextActive: { color: "#FFF" },
+  opacityRow: { flexDirection: "row", gap: 8 },
+  opacityBtn: {
+    flex: 1, paddingVertical: 8, alignItems: "center",
+    backgroundColor: Colors.dark.surface2, borderRadius: 8,
+    borderWidth: 1, borderColor: Colors.dark.border,
   },
-  content: {
-    padding: 24,
-    gap: 32,
-  },
-  previewContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 24,
-    backgroundColor: Colors.dark.surface2,
-    borderRadius: 16,
-  },
-  pdfPage: {
-    width: 200,
-    height: 280,
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    padding: 16,
-    gap: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 8,
-    overflow: "hidden",
-  },
-  pdfLine: {
-    height: 6,
-    backgroundColor: "#E2E8F0",
-    borderRadius: 3,
-  },
-  pdfBlock: {
-    height: 40,
-    backgroundColor: "#F1F5F9",
-    borderRadius: 4,
-  },
-  watermarkOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  watermarkTextPreview: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 32,
-    textAlign: "center",
-    letterSpacing: 2,
-  },
-  controls: {
-    gap: 24,
-  },
-  inputGroup: {
-    gap: 12,
-  },
-  label: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 14,
-    color: Colors.dark.textPrimary,
-  },
-  input: {
-    backgroundColor: Colors.dark.surface,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    borderRadius: 12,
-    padding: 16,
-    fontFamily: "Inter_400Regular",
-    fontSize: 16,
-    color: Colors.dark.textPrimary,
-  },
-  colorRow: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  colorDot: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  activeColorDot: {
-    borderColor: Colors.dark.textPrimary,
-  },
-  orientationRow: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  orientBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: Colors.dark.surface,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    padding: 16,
-    borderRadius: 12,
-  },
-  activeOrientBtn: {
-    borderColor: Colors.dark.accent,
-    backgroundColor: "rgba(99, 102, 241, 0.1)",
-  },
-  orientText: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 14,
-    color: Colors.dark.textSecondary,
-  },
-  activeOrientText: {
-    color: Colors.dark.accent,
-  },
-  imagePickerBtn: {
-    backgroundColor: Colors.dark.surface,
-    borderWidth: 2,
-    borderStyle: "dashed",
-    borderColor: Colors.dark.border,
-    borderRadius: 16,
-    padding: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
-  imagePickerText: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 16,
-    color: Colors.dark.textPrimary,
-  },
-  footer: {
-    padding: 24,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: Colors.dark.border,
-  },
+  opacityBtnActive: { backgroundColor: Colors.dark.accent, borderColor: Colors.dark.accent },
+  opacityBtnText: { fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.dark.textSecondary },
   applyBtn: {
-    backgroundColor: Colors.dark.accent,
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: Colors.dark.accent, padding: 16, borderRadius: 14, gap: 10,
   },
-  applyBtnText: {
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 16,
-    color: "#FFF",
-  },
-  successState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  applyBtnDisabled: { opacity: 0.5 },
+  applyBtnText: { fontFamily: "Inter_600SemiBold", color: "#FFF", fontSize: 16 },
+  successState: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14 },
   successIcon: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
+    width: 96, height: 96, borderRadius: 48,
+    backgroundColor: "rgba(16,185,129,0.12)", alignItems: "center", justifyContent: "center",
   },
-  successTitle: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 24,
-    color: Colors.dark.textPrimary,
+  successTitle: { fontFamily: "Inter_700Bold", fontSize: 22, color: Colors.dark.textPrimary },
+  successSub: { fontFamily: "Inter_400Regular", fontSize: 14, color: Colors.dark.textSecondary },
+  doneBtn: {
+    marginTop: 8, backgroundColor: Colors.dark.surface, borderRadius: 12,
+    paddingHorizontal: 24, paddingVertical: 12, borderWidth: 1, borderColor: Colors.dark.border,
   },
+  doneBtnText: { fontFamily: "Inter_500Medium", fontSize: 14, color: Colors.dark.textPrimary },
 });
