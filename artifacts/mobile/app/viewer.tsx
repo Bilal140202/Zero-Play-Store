@@ -1,211 +1,360 @@
-import React, { useState } from "react";
-import { View, StyleSheet, Text, Pressable, TextInput, Platform, ScrollView, Modal, Alert } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  ActivityIndicator,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
-import { PDFPage } from "@/components/PDFPage";
 import { ToolBar, ToolType } from "@/components/ToolBar";
 import { ContextToolbar } from "@/components/ContextToolbar";
-import Animated, { FadeIn, FadeOut, SlideInLeft, SlideOutLeft, SlideInDown, SlideOutDown } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  SlideInDown,
+  SlideOutDown,
+} from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
+import * as FileSystem from "expo-file-system";
+import { WebView } from "react-native-webview";
+
+// ─── PDF.js HTML template ───────────────────────────────────────────────────
+
+function buildPdfHtml(base64: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #111118; }
+    #status {
+      color: #94A3B8;
+      font-family: -apple-system, sans-serif;
+      font-size: 15px;
+      text-align: center;
+      padding: 60px 24px;
+    }
+    #error {
+      color: #F87171;
+      font-family: -apple-system, sans-serif;
+      font-size: 14px;
+      text-align: center;
+      padding: 60px 24px;
+      display: none;
+    }
+    .pdf-page {
+      display: block;
+      margin: 10px auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Rendering PDF…</div>
+  <div id="error"></div>
+  <div id="container"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    function post(obj) {
+      try { window.ReactNativeWebView.postMessage(JSON.stringify(obj)); } catch(e) {}
+    }
+
+    (function() {
+      var b64 = '${base64}';
+      var bStr = atob(b64);
+      var bytes = new Uint8Array(bStr.length);
+      for (var i = 0; i < bStr.length; i++) bytes[i] = bStr.charCodeAt(i);
+
+      pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
+        document.getElementById('status').style.display = 'none';
+        var total = pdf.numPages;
+        post({ type: 'pages', count: total });
+
+        var container = document.getElementById('container');
+        var deviceWidth = window.innerWidth;
+
+        for (var n = 1; n <= total; n++) {
+          (function(pageNum) {
+            pdf.getPage(pageNum).then(function(page) {
+              var unscaled = page.getViewport({ scale: 1 });
+              var scale = deviceWidth / unscaled.width;
+              var viewport = page.getViewport({ scale: scale });
+
+              var canvas = document.createElement('canvas');
+              canvas.className = 'pdf-page';
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              canvas.style.width = viewport.width + 'px';
+              canvas.style.height = viewport.height + 'px';
+              canvas.id = 'page-' + pageNum;
+
+              var placeholder = document.createElement('div');
+              placeholder.style.width = viewport.width + 'px';
+              placeholder.style.height = viewport.height + 'px';
+              placeholder.style.margin = '10px auto';
+              placeholder.style.background = '#FFF';
+              placeholder.appendChild(canvas);
+              container.appendChild(placeholder);
+
+              page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport: viewport,
+              }).promise.then(function() {
+                post({ type: 'rendered', page: pageNum });
+              });
+            });
+          })(n);
+        }
+      }).catch(function(err) {
+        document.getElementById('status').style.display = 'none';
+        var el = document.getElementById('error');
+        el.style.display = 'block';
+        el.textContent = 'Could not render PDF: ' + err.message;
+        post({ type: 'error', message: err.message });
+      });
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+// ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ViewerScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
-  
-  const fileName = (params.fileName as string) || "Document.pdf";
-  const totalPages = parseInt(params.pages as string) || 5;
 
-  const [activeTool, setActiveTool] = useState<ToolType>('select');
+  const fileName = (params.fileName as string) || "Document.pdf";
+  const fileUri = (params.fileUri as string) || "";
+
+  // PDF state
+  const [pdfHtml, setPdfHtml] = useState("");
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  const [totalPages, setTotalPages] = useState<number | null>(null);
+
+  // UI state
+  const [activeTool, setActiveTool] = useState<ToolType>("select");
   const [color, setColor] = useState("#6366F1");
   const [strokeWidth, setStrokeWidth] = useState(4);
-  const [shapeType, setShapeType] = useState<'rectangle'|'circle'|'arrow'|'line'>('rectangle');
-
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showSidebar, setShowSidebar] = useState(false);
+  const [shapeType, setShapeType] = useState<
+    "rectangle" | "circle" | "arrow" | "line"
+  >("rectangle");
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [bookmarkedPages, setBookmarkedPages] = useState<number[]>([]);
+  const [bookmarked, setBookmarked] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [isUnsavedChanges, setIsUnsavedChanges] = useState(false);
-  const [zoom, setZoom] = useState(1.0);
 
-  const [textOverlay, setTextOverlay] = useState<{visible: boolean, x: number, y: number, text: string}>({visible: false, x: 0, y: 0, text: ""});
+  // Load real PDF
+  useEffect(() => {
+    if (!fileUri || Platform.OS === "web") return;
+    loadPdf();
+  }, [fileUri]);
+
+  const loadPdf = useCallback(async () => {
+    setPdfLoading(true);
+    setPdfError("");
+    try {
+      const info = await FileSystem.getInfoAsync(fileUri);
+      if (!info.exists) {
+        setPdfError("File not found. It may have been moved or deleted.");
+        return;
+      }
+      const base64 = await FileSystem.readAsStringAsync(fileUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      setPdfHtml(buildPdfHtml(base64));
+    } catch (e: any) {
+      setPdfError(e?.message || "Failed to load the PDF file.");
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [fileUri]);
+
+  const handleWebViewMessage = useCallback((event: any) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === "pages") setTotalPages(msg.count);
+      if (msg.type === "error") setPdfError(msg.message);
+    } catch (_) {}
+  }, []);
 
   const toggleBookmark = () => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setBookmarkedPages(prev => 
-      prev.includes(currentPage) ? prev.filter(p => p !== currentPage) : [...prev, currentPage]
-    );
-  };
-
-  const handleCanvasPress = (evt: any) => {
-    if (activeTool === 'text') {
-      setTextOverlay({
-        visible: true,
-        x: evt.nativeEvent.locationX || 100,
-        y: evt.nativeEvent.locationY || 100,
-        text: ""
-      });
-    } else if (activeTool === 'form') {
-      router.push("/forms");
-    } else if (activeTool === 'comment') {
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      Alert.alert("Add Comment", "Tap and hold any text to add a sticky note comment.");
-    }
-  };
-
-  const handleSaveText = () => {
-    setTextOverlay(prev => ({...prev, visible: false}));
-    setIsUnsavedChanges(true);
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setBookmarked((b) => !b);
   };
 
   const handleSaveDoc = () => {
-    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setIsUnsavedChanges(false);
+    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setShowMoreMenu(false);
-    Alert.alert("Success", "Document saved successfully");
+    Alert.alert("Saved", "Document saved successfully.");
   };
 
-  const renderPages = () => {
-    const pages = [];
-    for (let i = 1; i <= totalPages; i++) {
-      pages.push(
-        <Pressable key={i} onPress={handleCanvasPress} style={styles.pageWrapper}>
-          <PDFPage pageNumber={i} />
-        </Pressable>
+  const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  // ─── Render PDF area ───────────────────────────────────────────────────────
+
+  const renderPdfArea = () => {
+    // Web: placeholder message
+    if (Platform.OS === "web") {
+      return (
+        <View style={styles.centerBox}>
+          <Ionicons name="document-text-outline" size={56} color={Colors.dark.border} />
+          <Text style={styles.centerText}>Open the app on your phone to view PDFs</Text>
+        </View>
       );
     }
-    return pages;
+
+    // No URI provided
+    if (!fileUri) {
+      return (
+        <View style={styles.centerBox}>
+          <Ionicons name="document-outline" size={56} color={Colors.dark.border} />
+          <Text style={styles.centerText}>No file selected</Text>
+        </View>
+      );
+    }
+
+    // Loading base64
+    if (pdfLoading) {
+      return (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color={Colors.dark.accent} />
+          <Text style={[styles.centerText, { marginTop: 16 }]}>
+            Loading PDF…
+          </Text>
+        </View>
+      );
+    }
+
+    // Error
+    if (pdfError) {
+      return (
+        <View style={styles.centerBox}>
+          <Ionicons name="alert-circle-outline" size={48} color="#F87171" />
+          <Text style={[styles.centerText, { color: "#F87171", marginTop: 12 }]}>
+            {pdfError}
+          </Text>
+          <Pressable style={styles.retryBtn} onPress={loadPdf}>
+            <Text style={styles.retryText}>Try Again</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    // Real PDF in WebView
+    if (pdfHtml) {
+      return (
+        <WebView
+          style={styles.webView}
+          source={{ html: pdfHtml, baseUrl: "" }}
+          originWhitelist={["*"]}
+          javaScriptEnabled
+          allowFileAccess
+          allowFileAccessFromFileURLs
+          allowUniversalAccessFromFileURLs
+          onMessage={handleWebViewMessage}
+          scrollEnabled
+          showsVerticalScrollIndicator
+          onError={(e) =>
+            setPdfError("WebView error: " + e.nativeEvent.description)
+          }
+        />
+      );
+    }
+
+    return null;
   };
 
-  const renderSidebarThumbnails = () => {
-    const thumbs = [];
-    for (let i = 1; i <= totalPages; i++) {
-      thumbs.push(
-        <Pressable 
-          key={i} 
-          style={[styles.thumbnail, currentPage === i && styles.activeThumbnail]}
-          onPress={() => setCurrentPage(i)}
-        >
-          <Text style={[styles.thumbnailText, currentPage === i && styles.activeThumbnailText]}>{i}</Text>
-        </Pressable>
-      );
-    }
-    return thumbs;
-  };
+  // ─── JSX ──────────────────────────────────────────────────────────────────
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: topPad }]}>
+      {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.dark.textPrimary} />
         </Pressable>
-        
-        <Pressable onPress={() => setShowSidebar(!showSidebar)} style={styles.iconBtn}>
-          <Ionicons name="list" size={24} color={Colors.dark.textPrimary} />
-        </Pressable>
 
         <View style={styles.titleContainer}>
-          <Text style={styles.title} numberOfLines={1}>{fileName}</Text>
-          <Text style={styles.pageIndicator}>{currentPage}/{totalPages}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {fileName}
+          </Text>
+          {totalPages !== null && (
+            <Text style={styles.pageIndicator}>
+              {totalPages} page{totalPages !== 1 ? "s" : ""}
+            </Text>
+          )}
         </View>
 
-        <Pressable onPress={() => setShowSearch(!showSearch)} style={styles.iconBtn}>
+        <Pressable
+          onPress={() => setShowSearch((v) => !v)}
+          style={styles.iconBtn}
+        >
           <Ionicons name="search" size={20} color={Colors.dark.textPrimary} />
         </Pressable>
-        
+
         <Pressable onPress={toggleBookmark} style={styles.iconBtn}>
-          <Ionicons name={bookmarkedPages.includes(currentPage) ? "bookmark" : "bookmark-outline"} size={20} color={Colors.dark.textPrimary} />
+          <Ionicons
+            name={bookmarked ? "bookmark" : "bookmark-outline"}
+            size={20}
+            color={bookmarked ? Colors.dark.accent : Colors.dark.textPrimary}
+          />
         </Pressable>
 
-        <Pressable onPress={() => setShowMoreMenu(true)} style={styles.iconBtn}>
-          <Ionicons name="ellipsis-vertical" size={24} color={Colors.dark.textPrimary} />
-          {isUnsavedChanges && <View style={styles.unsavedDot} />}
+        <Pressable
+          onPress={() => setShowMoreMenu(true)}
+          style={styles.iconBtn}
+        >
+          <Ionicons
+            name="ellipsis-vertical"
+            size={24}
+            color={Colors.dark.textPrimary}
+          />
         </Pressable>
       </View>
 
+      {/* Search bar */}
       {showSearch && (
         <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.searchBar}>
-          <Ionicons name="search" size={20} color={Colors.dark.textSecondary} />
+          <Ionicons name="search" size={18} color={Colors.dark.textSecondary} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search document..."
+            placeholder="Search in document…"
             placeholderTextColor={Colors.dark.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoFocus
+            returnKeyType="search"
           />
-          <Pressable onPress={() => setShowSearch(false)}>
-            <Ionicons name="close" size={20} color={Colors.dark.textSecondary} />
+          <Pressable onPress={() => { setShowSearch(false); setSearchQuery(""); }}>
+            <Ionicons name="close" size={18} color={Colors.dark.textSecondary} />
           </Pressable>
         </Animated.View>
       )}
 
-      <View style={styles.mainArea}>
-        {showSidebar && (
-          <Animated.View entering={SlideInLeft} exiting={SlideOutLeft} style={styles.sidebar}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sidebarScroll}>
-              {renderSidebarThumbnails()}
-            </ScrollView>
-          </Animated.View>
-        )}
+      {/* Main PDF area */}
+      <View style={styles.pdfArea}>{renderPdfArea()}</View>
 
-        <View style={styles.canvasContainer}>
-          <ScrollView 
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={true}
-            onScroll={(e) => {
-              // naive page tracking based on scroll y
-              const y = e.nativeEvent.contentOffset.y;
-              const pageHeight = 500; // approx
-              const page = Math.max(1, Math.min(totalPages, Math.floor(y / pageHeight) + 1));
-              setCurrentPage(page);
-            }}
-            scrollEventThrottle={200}
-          >
-            {renderPages()}
-
-            {textOverlay.visible && (
-              <View style={[styles.textOverlayContainer, { top: textOverlay.y, left: 16, right: 16 }]}>
-                <View style={styles.textOverlayToolbar}>
-                  <Pressable><Ionicons name="remove" size={16} color="#FFF" /></Pressable>
-                  <Text style={{color: "#FFF"}}>14pt</Text>
-                  <Pressable><Ionicons name="add" size={16} color="#FFF" /></Pressable>
-                  <View style={{width: 1, height: 16, backgroundColor: Colors.dark.border}} />
-                  <Pressable><Text style={{color: "#FFF", fontWeight: "bold"}}>B</Text></Pressable>
-                  <Pressable><Text style={{color: "#FFF", fontStyle: "italic"}}>I</Text></Pressable>
-                  <Pressable><Text style={{color: "#FFF", textDecorationLine: "underline"}}>U</Text></Pressable>
-                </View>
-                <TextInput
-                  style={styles.textOverlayInput}
-                  value={textOverlay.text}
-                  onChangeText={(t) => setTextOverlay({...textOverlay, text: t})}
-                  placeholder="Type here..."
-                  placeholderTextColor="#94A3B8"
-                  autoFocus
-                  multiline
-                />
-                <View style={styles.textOverlayActions}>
-                  <Pressable style={styles.textOverlayBtn} onPress={() => setTextOverlay({...textOverlay, visible: false})}>
-                    <Text style={{color: Colors.dark.textSecondary}}>Cancel</Text>
-                  </Pressable>
-                  <Pressable style={[styles.textOverlayBtn, {backgroundColor: Colors.dark.accent}]} onPress={handleSaveText}>
-                    <Text style={{color: "#FFF"}}>Done</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-
-          </ScrollView>
-        </View>
-      </View>
-
-      <ContextToolbar 
-        activeTool={activeTool} 
-        color={color} 
+      {/* Annotation toolbar */}
+      <ContextToolbar
+        activeTool={activeTool}
+        color={color}
         onColorChange={setColor}
         strokeWidth={strokeWidth}
         onStrokeWidthChange={setStrokeWidth}
@@ -214,49 +363,100 @@ export default function ViewerScreen() {
       />
       <ToolBar activeTool={activeTool} onSelectTool={setActiveTool} />
 
+      {/* More options sheet */}
       <Modal visible={showMoreMenu} transparent animationType="fade">
-        <Pressable style={styles.modalOverlay} onPress={() => setShowMoreMenu(false)}>
-          <Animated.View entering={SlideInDown} exiting={SlideOutDown} style={[styles.actionSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowMoreMenu(false)}
+        >
+          <Animated.View
+            entering={SlideInDown}
+            exiting={SlideOutDown}
+            style={[
+              styles.actionSheet,
+              { paddingBottom: Math.max(insets.bottom, 24) },
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Document Options</Text>
-            
+
             <Pressable style={styles.sheetAction} onPress={handleSaveDoc}>
-              <Ionicons name="save-outline" size={24} color={Colors.dark.textPrimary} />
+              <Ionicons name="save-outline" size={22} color={Colors.dark.textPrimary} />
               <Text style={styles.sheetActionText}>Save Document</Text>
-              {isUnsavedChanges && <View style={styles.unsavedBadge}><Text style={styles.unsavedBadgeText}>Unsaved</Text></View>}
-            </Pressable>
-            
-            <Pressable style={styles.sheetAction} onPress={() => {setShowMoreMenu(false); Alert.alert("Share");}}>
-              <Ionicons name="share-outline" size={24} color={Colors.dark.textPrimary} />
-              <Text style={styles.sheetActionText}>Share</Text>
             </Pressable>
 
-            <Pressable style={styles.sheetAction} onPress={() => {setShowMoreMenu(false); router.push("/protect");}}>
-              <Ionicons name="lock-closed-outline" size={24} color={Colors.dark.textPrimary} />
+            <Pressable
+              style={styles.sheetAction}
+              onPress={() => {
+                setShowMoreMenu(false);
+                router.push("/protect");
+              }}
+            >
+              <Ionicons name="lock-closed-outline" size={22} color={Colors.dark.textPrimary} />
               <Text style={styles.sheetActionText}>Add Password</Text>
             </Pressable>
 
-            <Pressable style={styles.sheetAction} onPress={() => {setShowMoreMenu(false); router.push("/watermark");}}>
-              <Ionicons name="water-outline" size={24} color={Colors.dark.textPrimary} />
+            <Pressable
+              style={styles.sheetAction}
+              onPress={() => {
+                setShowMoreMenu(false);
+                router.push("/watermark");
+              }}
+            >
+              <Ionicons name="water-outline" size={22} color={Colors.dark.textPrimary} />
               <Text style={styles.sheetActionText}>Add Watermark</Text>
             </Pressable>
 
-            <Pressable style={styles.sheetAction} onPress={() => {setShowMoreMenu(false); router.push("/bookmarks");}}>
-              <Ionicons name="bookmarks-outline" size={24} color={Colors.dark.textPrimary} />
+            <Pressable
+              style={styles.sheetAction}
+              onPress={() => {
+                setShowMoreMenu(false);
+                router.push("/sign");
+              }}
+            >
+              <Ionicons name="create-outline" size={22} color={Colors.dark.textPrimary} />
+              <Text style={styles.sheetActionText}>Sign Document</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.sheetAction}
+              onPress={() => {
+                setShowMoreMenu(false);
+                router.push("/bookmarks");
+              }}
+            >
+              <Ionicons name="bookmarks-outline" size={22} color={Colors.dark.textPrimary} />
               <Text style={styles.sheetActionText}>Bookmarks</Text>
             </Pressable>
 
-            <Pressable style={[styles.sheetAction, { borderTopWidth: 1, borderTopColor: Colors.dark.border, marginTop: 8, paddingTop: 16 }]} onPress={() => {setShowMoreMenu(false); router.back();}}>
-              <Ionicons name="close-circle-outline" size={24} color={Colors.dark.warning} />
-              <Text style={[styles.sheetActionText, { color: Colors.dark.warning }]}>Close Document</Text>
+            <Pressable
+              style={[
+                styles.sheetAction,
+                {
+                  borderTopWidth: 1,
+                  borderTopColor: Colors.dark.border,
+                  marginTop: 8,
+                  paddingTop: 16,
+                },
+              ]}
+              onPress={() => {
+                setShowMoreMenu(false);
+                router.back();
+              }}
+            >
+              <Ionicons name="close-circle-outline" size={22} color={Colors.dark.warning} />
+              <Text style={[styles.sheetActionText, { color: Colors.dark.warning }]}>
+                Close Document
+              </Text>
             </Pressable>
           </Animated.View>
         </Pressable>
       </Modal>
-
     </View>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
@@ -266,7 +466,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     height: 56,
     borderBottomWidth: 1,
     borderBottomColor: Colors.dark.border,
@@ -276,15 +476,15 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: "center",
     justifyContent: "center",
-    position: "relative",
   },
   titleContainer: {
     flex: 1,
     alignItems: "center",
+    paddingHorizontal: 4,
   },
   title: {
     fontFamily: "Inter_600SemiBold",
-    fontSize: 16,
+    fontSize: 15,
     color: Colors.dark.textPrimary,
   },
   pageIndicator: {
@@ -292,15 +492,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.dark.textSecondary,
     marginTop: 2,
-  },
-  unsavedDot: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.dark.warning,
   },
   searchBar: {
     flexDirection: "row",
@@ -310,7 +501,7 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     paddingHorizontal: 12,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 10,
     gap: 8,
   },
   searchInput: {
@@ -319,101 +510,43 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 14,
   },
-  mainArea: {
+  pdfArea: {
     flex: 1,
-    flexDirection: "row",
+    backgroundColor: "#111118",
   },
-  sidebar: {
-    width: 80,
-    backgroundColor: Colors.dark.surface,
-    borderRightWidth: 1,
-    borderRightColor: Colors.dark.border,
+  webView: {
+    flex: 1,
+    backgroundColor: "#111118",
   },
-  sidebarScroll: {
-    padding: 12,
-    gap: 12,
-    alignItems: "center",
-  },
-  thumbnail: {
-    width: 56,
-    height: 76,
-    backgroundColor: "#FFF",
-    borderRadius: 4,
+  centerBox: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  activeThumbnail: {
-    borderColor: Colors.dark.accent,
-  },
-  thumbnailText: {
-    color: "#000",
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-  },
-  activeThumbnailText: {
-    color: Colors.dark.accent,
-  },
-  canvasContainer: {
-    flex: 1,
-    backgroundColor: "#1A1A24",
-  },
-  scrollContent: {
-    paddingVertical: 24,
-    position: "relative",
-  },
-  pageWrapper: {
-    width: "100%",
-  },
-  textOverlayContainer: {
-    position: "absolute",
-    backgroundColor: Colors.dark.surface,
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    zIndex: 100,
-  },
-  textOverlayToolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: Colors.dark.surface2,
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  textOverlayInput: {
-    backgroundColor: "#FFF",
-    color: "#000",
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    fontFamily: "Inter_400Regular",
-    minHeight: 60,
-    textAlignVertical: "top",
-  },
-  textOverlayActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 12,
+    padding: 32,
     gap: 12,
   },
-  textOverlayBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: Colors.dark.surface2,
+  centerText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 15,
+    color: Colors.dark.textSecondary,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: Colors.dark.accent,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryText: {
+    fontFamily: "Inter_600SemiBold",
+    color: "#FFF",
+    fontSize: 14,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
   },
   actionSheet: {
@@ -426,21 +559,21 @@ const styles = StyleSheet.create({
   sheetHandle: {
     width: 40,
     height: 4,
-    backgroundColor: Colors.dark.surface2,
+    backgroundColor: Colors.dark.border,
     borderRadius: 2,
     alignSelf: "center",
-    marginBottom: 24,
+    marginBottom: 20,
   },
   sheetTitle: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 18,
     color: Colors.dark.textPrimary,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   sheetAction: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 16,
+    paddingVertical: 15,
     gap: 16,
   },
   sheetActionText: {
@@ -448,16 +581,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.dark.textPrimary,
     flex: 1,
-  },
-  unsavedBadge: {
-    backgroundColor: "rgba(245, 158, 11, 0.2)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  unsavedBadgeText: {
-    color: Colors.dark.warning,
-    fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
   },
 });
