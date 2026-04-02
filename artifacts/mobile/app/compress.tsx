@@ -22,7 +22,7 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { compressPdf } from "@/lib/pdfEngine";
 
 function formatBytes(b: number) {

@@ -23,7 +23,7 @@ import Animated, {
   SlideOutDown,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { WebView } from "react-native-webview";
 
 // ─── PDF.js HTML template ───────────────────────────────────────────────────
