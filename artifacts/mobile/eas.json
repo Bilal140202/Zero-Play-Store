@@ -28,13 +28,10 @@
       }
     },
     "production": {
-      "autoIncrement": "version",
+      "autoIncrement": true,
       "android": {
-        "buildType": "aab",
+        "buildType": "app-bundle",
         "gradleCommand": ":app:bundleRelease"
-      },
-      "ios": {
-        "autoIncrement": true
       },
       "env": {
         "NODE_ENV": "production"

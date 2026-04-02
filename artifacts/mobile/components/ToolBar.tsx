@@ -12,7 +12,7 @@ interface ToolBarProps {
 }
 
 const TOOLS: { id: ToolType; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
-  { id: 'select', icon: 'cursor', label: 'Select' },
+  { id: 'select', icon: 'hand-right-outline', label: 'Select' },
   { id: 'text', icon: 'text', label: 'Text' },
   { id: 'draw', icon: 'pencil', label: 'Draw' },
   { id: 'highlight', icon: 'color-wand', label: 'Highlight' },
