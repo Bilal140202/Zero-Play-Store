@@ -51,7 +51,7 @@
     },
     "android": {
       "package": "com.pdfx.editor",
-      "versionCode": 2,
+      "versionCode": 3,
       "compileSdkVersion": 35,
       "targetSdkVersion": 35,
       "minSdkVersion": 24,
