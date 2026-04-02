@@ -1,0 +1,26 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "OOlUz1_l_Ll9TB9kyQJgV"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "PDFX icon dramatic 3D"
+
+[[generated]]
+id = "qYX3kVMyaa3YJutp96vd2"
+uri = "file://artifacts/mobile/assets/images/adaptive-icon.png"
+type = "image"
+title = "PDFX adaptive icon dark bg"
+
+[[generated]]
+id = "5CoX7AaR3paDmvBdLOwXB"
+uri = "file://artifacts/mobile/assets/images/splash-icon.png"
+type = "image"
+title = "PDFX splash cinematic dark"
+
+[[generated]]
+id = "vOH9sRyn-6qqrVii3fN4K"
+uri = "file://artifacts/mobile/assets/images/feature-graphic.png"
+type = "image"
+title = "PDFX feature graphic banner"
