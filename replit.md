@@ -93,6 +93,24 @@ pnpm workspace monorepo using TypeScript. Primary artifact is PDFX — a fully o
 - EAS Build config: `artifacts/mobile/eas.json`
 - Guide: `artifacts/mobile/PLAY_STORE_GUIDE.md`
 
+## pdfEngine.ts — Full Function List (artifacts/mobile/lib/pdfEngine.ts)
+
+All functions are real pdf-lib operations, 100% offline:
+- `loadPdfDoc(uri)` — load PDF from device URI
+- `saveAndShare(pdf, filename)` — write to cache + open share sheet
+- `shareExistingPdf(uri, filename)` — share an existing file without modifying it
+- `mergePdfs(uris, outputName)` — merge multiple PDFs into one
+- `compressPdf(uri, outputName)` — strip unused objects, return size stats
+- `splitPdfByRanges(uri, ranges, baseName)` — split into parts by page ranges
+- `splitPdfEveryN(uri, n, baseName)` — split every N pages
+- `watermarkPdf(uri, text, opts, outputName)` — diagonal/center/top/bottom watermark
+- `applyPageOperations(uri, rotations, deletedIndices, outputName)` — rotate/delete pages
+- `extractPages(uri, pageIndices, outputName)` — extract subset of pages
+- `embedTextSignature(uri, text, opts, outputName)` — embed typed signature with underline on last page
+- `embedDrawnSignature(uri, svgPaths, cW, cH, opts, outputName)` — embed drawn paths as line segments
+- `protectPdfWithNotice(uri, password, outputName)` — adds RESTRICTED banner + metadata (pdf-lib does not support AES)
+- `addTextAnnotation(uri, text, pageIndex, opts, outputName)` — embed free text on a page
+
 ## Structure
 
 ```text

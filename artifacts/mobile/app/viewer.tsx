@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Platform,
@@ -8,7 +9,6 @@ import {
   Text,
   TextInput,
   View,
-  ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +25,7 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 import * as FileSystem from "expo-file-system/legacy";
 import { WebView } from "react-native-webview";
+import { addTextAnnotation, shareExistingPdf } from "@/lib/pdfEngine";
 
 // ─── PDF.js HTML template ───────────────────────────────────────────────────
 
@@ -160,6 +161,12 @@ export default function ViewerScreen() {
   const [bookmarked, setBookmarked] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
+  // Text annotation modal
+  const [showTextModal, setShowTextModal] = useState(false);
+  const [annotText, setAnnotText] = useState("");
+  const [annotPage, setAnnotPage] = useState("1");
+  const [annotWorking, setAnnotWorking] = useState(false);
+
   // Load real PDF
   useEffect(() => {
     if (!fileUri || Platform.OS === "web") return;
@@ -195,14 +202,64 @@ export default function ViewerScreen() {
   }, []);
 
   const toggleBookmark = () => {
-    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "web")
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setBookmarked((b) => !b);
   };
 
-  const handleSaveDoc = () => {
-    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  // Share the currently open PDF via Android share sheet
+  const handleSaveDoc = async () => {
     setShowMoreMenu(false);
-    Alert.alert("Saved", "Document saved successfully.");
+    if (!fileUri) {
+      Alert.alert("No File", "No PDF is currently open.");
+      return;
+    }
+    if (Platform.OS !== "web")
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await shareExistingPdf(fileUri, fileName);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not share the file.");
+    }
+  };
+
+  // When user selects the text tool, open annotation dialog
+  const handleToolSelect = (tool: ToolType) => {
+    setActiveTool(tool);
+    if (tool === "text" && fileUri) {
+      setAnnotText("");
+      setAnnotPage("1");
+      setShowTextModal(true);
+    } else if (tool === "sign" && fileUri) {
+      router.push({
+        pathname: "/sign",
+        params: { fileUri, fileName },
+      });
+      setActiveTool("select");
+    }
+  };
+
+  // Commit text annotation to PDF
+  const handleAddAnnotation = async () => {
+    if (!annotText.trim()) {
+      Alert.alert("Empty Text", "Please enter some text.");
+      return;
+    }
+    if (!fileUri) return;
+    setAnnotWorking(true);
+    try {
+      const pageIdx = Math.max(0, (parseInt(annotPage) || 1) - 1);
+      const outName = "annotated_" + fileName;
+      await addTextAnnotation(fileUri, annotText.trim(), pageIdx, {}, outName);
+      setShowTextModal(false);
+      setActiveTool("select");
+      if (Platform.OS !== "web")
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to add annotation.");
+    } finally {
+      setAnnotWorking(false);
+    }
   };
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -210,27 +267,34 @@ export default function ViewerScreen() {
   // ─── Render PDF area ───────────────────────────────────────────────────────
 
   const renderPdfArea = () => {
-    // Web: placeholder message
     if (Platform.OS === "web") {
       return (
         <View style={styles.centerBox}>
-          <Ionicons name="document-text-outline" size={56} color={Colors.dark.border} />
-          <Text style={styles.centerText}>Open the app on your phone to view PDFs</Text>
+          <Ionicons
+            name="document-text-outline"
+            size={56}
+            color={Colors.dark.border}
+          />
+          <Text style={styles.centerText}>
+            Open the app on your phone to view PDFs
+          </Text>
         </View>
       );
     }
 
-    // No URI provided
     if (!fileUri) {
       return (
         <View style={styles.centerBox}>
-          <Ionicons name="document-outline" size={56} color={Colors.dark.border} />
+          <Ionicons
+            name="document-outline"
+            size={56}
+            color={Colors.dark.border}
+          />
           <Text style={styles.centerText}>No file selected</Text>
         </View>
       );
     }
 
-    // Loading base64
     if (pdfLoading) {
       return (
         <View style={styles.centerBox}>
@@ -242,12 +306,13 @@ export default function ViewerScreen() {
       );
     }
 
-    // Error
     if (pdfError) {
       return (
         <View style={styles.centerBox}>
           <Ionicons name="alert-circle-outline" size={48} color="#F87171" />
-          <Text style={[styles.centerText, { color: "#F87171", marginTop: 12 }]}>
+          <Text
+            style={[styles.centerText, { color: "#F87171", marginTop: 12 }]}
+          >
             {pdfError}
           </Text>
           <Pressable style={styles.retryBtn} onPress={loadPdf}>
@@ -257,7 +322,6 @@ export default function ViewerScreen() {
       );
     }
 
-    // Real PDF in WebView
     if (pdfHtml) {
       return (
         <WebView
@@ -288,7 +352,11 @@ export default function ViewerScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.iconBtn}>
-          <Ionicons name="arrow-back" size={24} color={Colors.dark.textPrimary} />
+          <Ionicons
+            name="arrow-back"
+            size={24}
+            color={Colors.dark.textPrimary}
+          />
         </Pressable>
 
         <View style={styles.titleContainer}>
@@ -313,7 +381,9 @@ export default function ViewerScreen() {
           <Ionicons
             name={bookmarked ? "bookmark" : "bookmark-outline"}
             size={20}
-            color={bookmarked ? Colors.dark.accent : Colors.dark.textPrimary}
+            color={
+              bookmarked ? Colors.dark.accent : Colors.dark.textPrimary
+            }
           />
         </Pressable>
 
@@ -331,7 +401,11 @@ export default function ViewerScreen() {
 
       {/* Search bar */}
       {showSearch && (
-        <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.searchBar}>
+        <Animated.View
+          entering={FadeIn}
+          exiting={FadeOut}
+          style={styles.searchBar}
+        >
           <Ionicons name="search" size={18} color={Colors.dark.textSecondary} />
           <TextInput
             style={styles.searchInput}
@@ -342,8 +416,17 @@ export default function ViewerScreen() {
             autoFocus
             returnKeyType="search"
           />
-          <Pressable onPress={() => { setShowSearch(false); setSearchQuery(""); }}>
-            <Ionicons name="close" size={18} color={Colors.dark.textSecondary} />
+          <Pressable
+            onPress={() => {
+              setShowSearch(false);
+              setSearchQuery("");
+            }}
+          >
+            <Ionicons
+              name="close"
+              size={18}
+              color={Colors.dark.textSecondary}
+            />
           </Pressable>
         </Animated.View>
       )}
@@ -361,9 +444,82 @@ export default function ViewerScreen() {
         shapeType={shapeType}
         onShapeTypeChange={setShapeType}
       />
-      <ToolBar activeTool={activeTool} onSelectTool={setActiveTool} />
+      <ToolBar activeTool={activeTool} onSelectTool={handleToolSelect} />
 
-      {/* More options sheet */}
+      {/* ─── Text Annotation Modal ─────────────────────────────────────── */}
+      <Modal visible={showTextModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <Animated.View
+            entering={SlideInDown}
+            exiting={SlideOutDown}
+            style={[
+              styles.textModal,
+              { paddingBottom: Math.max(insets.bottom, 24) },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Add Text to PDF</Text>
+            <Text style={styles.sheetSub}>
+              The text will be embedded permanently into the PDF page.
+            </Text>
+
+            <TextInput
+              style={styles.annotInput}
+              placeholder="Type your text here…"
+              placeholderTextColor={Colors.dark.textSecondary}
+              value={annotText}
+              onChangeText={setAnnotText}
+              multiline
+              numberOfLines={3}
+              autoFocus
+            />
+
+            <View style={styles.pageRow}>
+              <Text style={styles.pageLabel}>Page number:</Text>
+              <TextInput
+                style={styles.pageInput}
+                value={annotPage}
+                onChangeText={setAnnotPage}
+                keyboardType="number-pad"
+                maxLength={4}
+                placeholder="1"
+                placeholderTextColor={Colors.dark.textSecondary}
+              />
+              {totalPages !== null && (
+                <Text style={styles.pageHint}>of {totalPages}</Text>
+              )}
+            </View>
+
+            <View style={styles.annotFooter}>
+              <Pressable
+                style={styles.annotCancelBtn}
+                onPress={() => {
+                  setShowTextModal(false);
+                  setActiveTool("select");
+                }}
+              >
+                <Text style={styles.annotCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.annotSaveBtn,
+                  (!annotText.trim() || annotWorking) && { opacity: 0.45 },
+                ]}
+                onPress={handleAddAnnotation}
+                disabled={!annotText.trim() || annotWorking}
+              >
+                {annotWorking ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Text style={styles.annotSaveText}>Add to PDF</Text>
+                )}
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      {/* ─── More options sheet ────────────────────────────────────────── */}
       <Modal visible={showMoreMenu} transparent animationType="fade">
         <Pressable
           style={styles.modalOverlay}
@@ -380,44 +536,92 @@ export default function ViewerScreen() {
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Document Options</Text>
 
+            {/* Save / Share */}
             <Pressable style={styles.sheetAction} onPress={handleSaveDoc}>
-              <Ionicons name="save-outline" size={22} color={Colors.dark.textPrimary} />
-              <Text style={styles.sheetActionText}>Save Document</Text>
+              <Ionicons
+                name="share-outline"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
+              <Text style={styles.sheetActionText}>Save / Share Document</Text>
             </Pressable>
 
+            {/* Protect */}
             <Pressable
               style={styles.sheetAction}
               onPress={() => {
                 setShowMoreMenu(false);
-                router.push("/protect");
+                router.push({
+                  pathname: "/protect",
+                  params: { fileUri, fileName },
+                });
               }}
             >
-              <Ionicons name="lock-closed-outline" size={22} color={Colors.dark.textPrimary} />
-              <Text style={styles.sheetActionText}>Add Password</Text>
+              <Ionicons
+                name="lock-closed-outline"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
+              <Text style={styles.sheetActionText}>Add Password / Restrict</Text>
             </Pressable>
 
+            {/* Watermark */}
             <Pressable
               style={styles.sheetAction}
               onPress={() => {
                 setShowMoreMenu(false);
-                router.push("/watermark");
+                router.push({
+                  pathname: "/watermark",
+                  params: { fileUri, fileName },
+                });
               }}
             >
-              <Ionicons name="water-outline" size={22} color={Colors.dark.textPrimary} />
+              <Ionicons
+                name="water-outline"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
               <Text style={styles.sheetActionText}>Add Watermark</Text>
             </Pressable>
 
+            {/* Sign */}
             <Pressable
               style={styles.sheetAction}
               onPress={() => {
                 setShowMoreMenu(false);
-                router.push("/sign");
+                router.push({
+                  pathname: "/sign",
+                  params: { fileUri, fileName },
+                });
               }}
             >
-              <Ionicons name="create-outline" size={22} color={Colors.dark.textPrimary} />
+              <Ionicons
+                name="create-outline"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
               <Text style={styles.sheetActionText}>Sign Document</Text>
             </Pressable>
 
+            {/* Add Text */}
+            <Pressable
+              style={styles.sheetAction}
+              onPress={() => {
+                setShowMoreMenu(false);
+                setAnnotText("");
+                setAnnotPage("1");
+                setShowTextModal(true);
+              }}
+            >
+              <Ionicons
+                name="text"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
+              <Text style={styles.sheetActionText}>Add Text Annotation</Text>
+            </Pressable>
+
+            {/* Bookmarks */}
             <Pressable
               style={styles.sheetAction}
               onPress={() => {
@@ -425,10 +629,15 @@ export default function ViewerScreen() {
                 router.push("/bookmarks");
               }}
             >
-              <Ionicons name="bookmarks-outline" size={22} color={Colors.dark.textPrimary} />
+              <Ionicons
+                name="bookmarks-outline"
+                size={22}
+                color={Colors.dark.textPrimary}
+              />
               <Text style={styles.sheetActionText}>Bookmarks</Text>
             </Pressable>
 
+            {/* Close */}
             <Pressable
               style={[
                 styles.sheetAction,
@@ -444,8 +653,14 @@ export default function ViewerScreen() {
                 router.back();
               }}
             >
-              <Ionicons name="close-circle-outline" size={22} color={Colors.dark.warning} />
-              <Text style={[styles.sheetActionText, { color: Colors.dark.warning }]}>
+              <Ionicons
+                name="close-circle-outline"
+                size={22}
+                color={Colors.dark.warning}
+              />
+              <Text
+                style={[styles.sheetActionText, { color: Colors.dark.warning }]}
+              >
                 Close Document
               </Text>
             </Pressable>
@@ -549,6 +764,13 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
   },
+  textModal: {
+    backgroundColor: Colors.dark.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+  },
   actionSheet: {
     backgroundColor: Colors.dark.surface,
     borderTopLeftRadius: 24,
@@ -568,7 +790,85 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     fontSize: 18,
     color: Colors.dark.textPrimary,
-    marginBottom: 12,
+    marginBottom: 4,
+  },
+  sheetSub: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  annotInput: {
+    backgroundColor: Colors.dark.surface2,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    padding: 14,
+    color: Colors.dark.textPrimary,
+    fontFamily: "Inter_400Regular",
+    fontSize: 15,
+    minHeight: 90,
+    textAlignVertical: "top",
+    marginBottom: 16,
+  },
+  pageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 20,
+  },
+  pageLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 14,
+    color: Colors.dark.textSecondary,
+  },
+  pageInput: {
+    backgroundColor: Colors.dark.surface2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: Colors.dark.textPrimary,
+    fontFamily: "Inter_500Medium",
+    fontSize: 15,
+    width: 64,
+    textAlign: "center",
+  },
+  pageHint: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.dark.textSecondary,
+  },
+  annotFooter: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  annotCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  annotCancelText: {
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.dark.textSecondary,
+    fontSize: 15,
+  },
+  annotSaveBtn: {
+    flex: 2,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    backgroundColor: Colors.dark.accent,
+  },
+  annotSaveText: {
+    fontFamily: "Inter_600SemiBold",
+    color: "#FFF",
+    fontSize: 15,
   },
   sheetAction: {
     flexDirection: "row",
