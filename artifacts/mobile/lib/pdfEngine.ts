@@ -426,10 +426,126 @@ export async function protectPdfWithNotice(
 }
 
 /**
- * Add a free-text annotation to a specific page of a PDF.
- * xFrac / yFrac are fractional positions (0-1) across page width/height.
- * yFrac=0 means top of the page, yFrac=1 means bottom.
+ * Annotation object format sent from the WebView annotation canvas.
+ * Each annotation is keyed by 1-based page number.
  */
+interface WebAnnotation {
+  t: "freehand" | "highlight" | "rect" | "ellipse" | "arrow" | "line";
+  c: string;        // hex color
+  sw?: number;      // stroke width (px on canvas)
+  cw: number;       // canvas pixel width
+  ch: number;       // canvas pixel height
+  // freehand: array of points
+  p?: Array<{ x: number; y: number }>;
+  // highlight / rect / ellipse: bounding box (canvas px, origin top-left)
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  // arrow / line: start + end (canvas px, origin top-left)
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+}
+
+/**
+ * Embed all WebView-drawn annotations into a PDF using pdf-lib.
+ * annotsByPage: keys are 1-based page numbers (as strings from JSON).
+ * Coordinate mapping: canvas origin is top-left; pdf origin is bottom-left.
+ */
+export async function embedAnnotationsToPdf(
+  uri: string,
+  annotsByPage: Record<string, WebAnnotation[]>,
+  outputName = "annotated.pdf"
+): Promise<void> {
+  const pdf = await loadPdfDoc(uri);
+  const pages = pdf.getPages();
+
+  for (const [pageKey, anns] of Object.entries(annotsByPage)) {
+    if (!anns || anns.length === 0) continue;
+    const pageIdx = parseInt(pageKey) - 1;
+    if (pageIdx < 0 || pageIdx >= pages.length) continue;
+    const page = pages[pageIdx];
+    const { width: pdfW, height: pdfH } = page.getSize();
+
+    for (const ann of anns) {
+      const { cw, ch, sw = 2 } = ann;
+      const hex = ann.c.replace("#", "");
+      const r = parseInt(hex.slice(0, 2), 16) / 255;
+      const g = parseInt(hex.slice(2, 4), 16) / 255;
+      const b = parseInt(hex.slice(4, 6), 16) / 255;
+      const col = rgb(r, g, b);
+
+      // canvas x → pdf x: proportional
+      const cx = (v: number) => (v / cw) * pdfW;
+      // canvas y → pdf y: flip (canvas y grows down, pdf y grows up)
+      const cy = (v: number) => pdfH - (v / ch) * pdfH;
+
+      if (ann.t === "freehand" && ann.p && ann.p.length >= 2) {
+        for (let i = 0; i < ann.p.length - 1; i++) {
+          page.drawLine({
+            start: { x: cx(ann.p[i].x), y: cy(ann.p[i].y) },
+            end: { x: cx(ann.p[i + 1].x), y: cy(ann.p[i + 1].y) },
+            thickness: Math.max(0.5, sw * (pdfW / cw)),
+            color: col,
+            opacity: 0.9,
+          });
+        }
+      } else if (ann.t === "highlight" && ann.x != null) {
+        const rx = cx(ann.x!);
+        const ry = cy(ann.y! + ann.h!); // pdf bottom-left of rect
+        const rw = (ann.w! / cw) * pdfW;
+        const rh = (ann.h! / ch) * pdfH;
+        if (rw > 1 && rh > 1) {
+          page.drawRectangle({
+            x: rx, y: ry, width: rw, height: rh,
+            color: col, opacity: 0.3, borderWidth: 0,
+          });
+        }
+      } else if (ann.t === "rect" && ann.x != null) {
+        const rx = cx(ann.x!);
+        const ry = cy(ann.y! + ann.h!);
+        const rw = (ann.w! / cw) * pdfW;
+        const rh = (ann.h! / ch) * pdfH;
+        if (rw > 1 && rh > 1) {
+          page.drawRectangle({
+            x: rx, y: ry, width: rw, height: rh,
+            opacity: 0, borderColor: col,
+            borderWidth: Math.max(0.5, sw * (pdfW / cw)),
+            borderOpacity: 0.9,
+          });
+        }
+      } else if (ann.t === "ellipse" && ann.x != null) {
+        const ecx = cx(ann.x! + ann.w! / 2);
+        const ecy = cy(ann.y! + ann.h! / 2);
+        const xs = Math.max(1, (ann.w! / 2 / cw) * pdfW);
+        const ys = Math.max(1, (ann.h! / 2 / ch) * pdfH);
+        page.drawEllipse({
+          x: ecx, y: ecy, xScale: xs, yScale: ys,
+          opacity: 0, borderColor: col,
+          borderWidth: Math.max(0.5, sw * (pdfW / cw)),
+          borderOpacity: 0.9,
+        });
+      } else if ((ann.t === "arrow" || ann.t === "line") && ann.x1 != null) {
+        const lx1 = cx(ann.x1!), ly1 = cy(ann.y1!);
+        const lx2 = cx(ann.x2!), ly2 = cy(ann.y2!);
+        const lw = Math.max(0.5, sw * (pdfW / cw));
+        page.drawLine({ start: { x: lx1, y: ly1 }, end: { x: lx2, y: ly2 }, thickness: lw, color: col, opacity: 0.9 });
+        if (ann.t === "arrow") {
+          const dx = lx2 - lx1, dy = ly2 - ly1;
+          const angle = Math.atan2(dy, dx);
+          const hl = Math.min(18, Math.sqrt(dx * dx + dy * dy) * 0.3);
+          page.drawLine({ start: { x: lx2, y: ly2 }, end: { x: lx2 - hl * Math.cos(angle - Math.PI / 6), y: ly2 - hl * Math.sin(angle - Math.PI / 6) }, thickness: lw, color: col, opacity: 0.9 });
+          page.drawLine({ start: { x: lx2, y: ly2 }, end: { x: lx2 - hl * Math.cos(angle + Math.PI / 6), y: ly2 - hl * Math.sin(angle + Math.PI / 6) }, thickness: lw, color: col, opacity: 0.9 });
+        }
+      }
+    }
+  }
+
+  await saveAndShare(pdf, outputName);
+}
+
 export async function addTextAnnotation(
   uri: string,
   text: string,
