@@ -25,11 +25,14 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 import * as FileSystem from "expo-file-system/legacy";
 import { WebView } from "react-native-webview";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   addTextAnnotation,
   shareExistingPdf,
   embedAnnotationsToPdf,
 } from "@/lib/pdfEngine";
+
+const BOOKMARKS_KEY = "pdfx_bookmarks_v1";
 
 // ─── PDF.js HTML template with full annotation canvas system ────────────────
 
@@ -394,6 +397,19 @@ export default function ViewerScreen() {
   const [annotPage,     setAnnotPage]     = useState("1");
   const [annotWorking,  setAnnotWorking]  = useState(false);
 
+  // ─── Check bookmark status on mount ───────────────────────────────────────
+
+  useEffect(() => {
+    if (!fileUri) return;
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem(BOOKMARKS_KEY);
+        const list: Array<{ fileUri: string }> = stored ? JSON.parse(stored) : [];
+        setBookmarked(list.some((b) => b.fileUri === fileUri));
+      } catch {}
+    })();
+  }, [fileUri]);
+
   // ─── Load PDF ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -520,10 +536,31 @@ export default function ViewerScreen() {
 
   // ─── Other handlers ───────────────────────────────────────────────────────
 
-  const toggleBookmark = () => {
+  const toggleBookmark = async () => {
     if (Platform.OS !== "web")
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setBookmarked((b) => !b);
+    try {
+      const stored = await AsyncStorage.getItem(BOOKMARKS_KEY);
+      const list: Array<{ id: string; fileUri: string; fileName: string; date: string }> =
+        stored ? JSON.parse(stored) : [];
+      const exists = list.some((b) => b.fileUri === fileUri);
+      let updated: typeof list;
+      if (exists) {
+        updated = list.filter((b) => b.fileUri !== fileUri);
+      } else {
+        updated = [
+          {
+            id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
+            fileUri,
+            fileName,
+            date: new Date().toISOString(),
+          },
+          ...list,
+        ];
+      }
+      await AsyncStorage.setItem(BOOKMARKS_KEY, JSON.stringify(updated));
+      setBookmarked(!exists);
+    } catch {}
   };
 
   const handleSaveDoc = async () => {

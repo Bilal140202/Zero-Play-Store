@@ -546,6 +546,56 @@ export async function embedAnnotationsToPdf(
   await saveAndShare(pdf, outputName);
 }
 
+/**
+ * Embed multiple text fields onto a PDF in a single pass.
+ * Used by the Form Filler tool to overlay multiple values at once.
+ */
+export async function batchEmbedTextFields(
+  uri: string,
+  fields: Array<{
+    value: string;
+    page: number;     // 1-based
+    xFrac?: number;   // 0-1, default 0.08
+    yFrac?: number;   // 0-1 from top, default 0.5
+    fontSize?: number;
+    hexColor?: string;
+  }>,
+  outputName = "form_filled.pdf"
+): Promise<void> {
+  const pdf = await loadPdfDoc(uri);
+  const pages = pdf.getPages();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+
+  for (const field of fields) {
+    if (!field.value.trim()) continue;
+    const idx = Math.min(Math.max(0, field.page - 1), pages.length - 1);
+    const page = pages[idx];
+    const { width, height } = page.getSize();
+    const fontSize = field.fontSize ?? 13;
+    const xFrac = field.xFrac ?? 0.08;
+    const yFrac = field.yFrac ?? 0.5;
+
+    const hex = (field.hexColor ?? "#000000").replace("#", "");
+    const r = parseInt(hex.slice(0, 2), 16) / 255;
+    const g = parseInt(hex.slice(2, 4), 16) / 255;
+    const b = parseInt(hex.slice(4, 6), 16) / 255;
+
+    const x = Math.max(10, width * xFrac);
+    const y = Math.max(10, height * (1 - yFrac) - fontSize);
+
+    page.drawText(field.value.trim(), {
+      x,
+      y,
+      size: fontSize,
+      font,
+      color: rgb(r, g, b),
+      maxWidth: width - x - 10,
+    });
+  }
+
+  await saveAndShare(pdf, outputName);
+}
+
 export async function addTextAnnotation(
   uri: string,
   text: string,

@@ -2,8 +2,9 @@
   "expo": {
     "name": "PDFX - PDF Editor & Viewer",
     "slug": "pdfx",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "description": "Edit, annotate, sign and merge PDFs. 100% free. Works offline. No subscription, no account, no data upload.",
+    "privacyPolicyUrl": "https://sites.google.com/view/pdfx-privacy/home",
     "privacy": "public",
     "platforms": [
       "ios",
@@ -51,7 +52,7 @@
     },
     "android": {
       "package": "com.pdfx.editor",
-      "versionCode": 3,
+      "versionCode": 4,
       "compileSdkVersion": 35,
       "targetSdkVersion": 35,
       "minSdkVersion": 24,

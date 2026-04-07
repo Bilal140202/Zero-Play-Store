@@ -141,9 +141,6 @@ export default function HomeScreen() {
           </View>
         </View>
         <View style={styles.topBarRight}>
-          <Pressable style={styles.iconBtn} onPress={() => router.push("/todo")}>
-            <Ionicons name="bar-chart-outline" size={22} color={Colors.dark.textSecondary} />
-          </Pressable>
           <Pressable style={styles.iconBtn} onPress={() => router.push("/settings")}>
             <Ionicons name="settings-outline" size={22} color={Colors.dark.textSecondary} />
           </Pressable>

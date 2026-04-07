@@ -34,7 +34,6 @@ function RootLayoutNav() {
       <Stack.Screen name="split" />
       <Stack.Screen name="bookmarks" />
       <Stack.Screen name="forms" />
-      <Stack.Screen name="todo" />
     </Stack>
   );
 }
